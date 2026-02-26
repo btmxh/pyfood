@@ -96,7 +96,10 @@
             trim-trailing-whitespace.enable = true;
             ruff.enable = true;
             ruff-format.enable = true;
-            rustfmt.enable = true;
+            rustfmt = {
+              enable = true;
+              settings.manifest-path = "packages/rsimulator/Cargo.toml";
+            };
             check-toml.enable = true;
             taplo.enable = true;
           };

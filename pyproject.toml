@@ -1,1 +1,12 @@
+[project]
+name = "pyfood"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["rsimulator", "simulator", "tqdm"]
+
+[tool.uv.sources]
+rsimulator = { workspace = true }
+simulator = { workspace = true }
+
 [tool.uv.workspace]
+members = ["packages/*"]
