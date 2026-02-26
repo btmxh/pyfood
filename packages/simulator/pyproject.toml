@@ -1,4 +1,5 @@
 [project]
 name = "simulator"
 version = "0.1.0"
-dependencies = ["rsimulator"]
+readme = "README.md"
+packages = [{ include = "simulator" }]
