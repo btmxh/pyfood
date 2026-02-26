@@ -9,6 +9,8 @@ from typing import List, Optional, Dict, Any, Tuple
 import math
 import json
 
+from pathlib import Path
+
 Time = float
 Coord = Tuple[float, float]
 ID = int
@@ -150,3 +152,84 @@ class DVRPTWInstance:
             depot_ids=o.get("depot_ids", []),
         )
         return inst
+
+
+def load_vrpr_csv(
+    csv: str, truck_speed: float, truck_capacity: float, num_trucks: int
+) -> DVRPTWInstance:
+    """Load dataset files from the vrpr repository CSV format.
+
+    This mirrors the loader in the third-party repo (src/sim/problem.rs):
+    - skips the CSV header
+    - columns: x,y,demand,open,close,...,time (time at index 7)
+    - service_time is set to 10.0 for all requests
+    - the first entry is considered the depot and removed from the requests list
+    """
+    path = Path(csv)
+    requests: List[Request] = []
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found: {csv}")
+    with path.open("r", encoding="utf-8") as fh:
+        # skip header
+        lines = fh.readlines()
+    if len(lines) <= 1:
+        raise ValueError("CSV appears empty or missing header")
+    for idx, line in enumerate(lines[1:]):
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        # parse floats; be tolerant of extra/missing columns
+        vals = []
+        for p in parts:
+            try:
+                vals.append(float(p))
+            except ValueError:
+                vals.append(0.0)
+        # ensure we have enough columns
+        # follow rust loader: x=0,y=1,demand=2,open=3,close=4,time=7
+        x = vals[0] if len(vals) > 0 else 0.0
+        y = vals[1] if len(vals) > 1 else 0.0
+        demand = vals[2] if len(vals) > 2 else 0.0
+        open_t = vals[3] if len(vals) > 3 else 0.0
+        close_t = vals[4] if len(vals) > 4 else 0.0
+        service_time = 10.0
+        time_field = vals[7] if len(vals) > 7 else 0.0
+        req = Request(
+            id=idx,
+            position=(x, y),
+            demand=demand,
+            time_window=TimeWindow(open_t, close_t),
+            service_time=service_time,
+            release_time=time_field,
+            is_depot=False,
+        )
+        requests.append(req)
+
+    if not requests:
+        raise ValueError("No requests parsed from CSV")
+    depot = requests.pop(0)
+    depot.is_depot = True
+
+    # create vehicles
+    vehicles: List[Vehicle] = []
+    for vid in range(num_trucks):
+        v = Vehicle(
+            id=vid,
+            capacity=truck_capacity,
+            start_depot=depot.id,
+            end_depot=depot.id,
+            speed=truck_speed,
+        )
+        vehicles.append(v)
+
+    inst = DVRPTWInstance(
+        id=path.stem,
+        requests=[depot] + requests,
+        vehicles=vehicles,
+        weight_obj1=0.5,
+        seed=None,
+        planning_horizon=None,
+        depot_ids=[depot.id],
+    )
+    return inst
