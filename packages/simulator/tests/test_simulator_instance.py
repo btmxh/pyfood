@@ -1,16 +1,6 @@
-import sys
 import unittest
 from pathlib import Path
-import importlib
-
-
-# Ensure the simulator package from packages/simulator/src is importable
-root = Path(__file__).resolve().parents[1]
-sim_path = root / "packages" / "simulator" / "src"
-sys.path.insert(0, str(sim_path))
-
-# import dynamically so the import statement remains at the top of the file
-inst_mod = importlib.import_module("simulator.instance")
+import simulator.instance as inst_mod
 
 
 class TestSimulatorInstance(unittest.TestCase):
