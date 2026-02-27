@@ -5,14 +5,14 @@ dynamic release times, service times, and objective weight.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Any
 import math
 import json
 
 from pathlib import Path
 
 Time = float
-Coord = Tuple[float, float]
+Coord = tuple[float, float]
 ID = int
 
 
@@ -45,7 +45,7 @@ class Request:
     def distance_to(self, other: "Request") -> float:
         return euclidean(self.position, other.position)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["time_window"] = {
             "earliest": self.time_window.earliest,
@@ -55,7 +55,7 @@ class Request:
         return d
 
     @staticmethod
-    def from_dict(d: Dict[str, Any]) -> "Request":
+    def from_dict(d: dict[str, Any]) -> "Request":
         tw = TimeWindow(d["time_window"]["earliest"], d["time_window"]["latest"])
         return Request(
             id=d["id"],
@@ -73,30 +73,30 @@ class Vehicle:
     id: ID
     capacity: float
     start_depot: ID
-    end_depot: Optional[ID] = None
-    max_time: Optional[Time] = None
+    end_depot: ID | None = None
+    max_time: Time | None = None
     speed: float = 1.0
 
     def travel_time(self, distance: float) -> float:
         return distance / self.speed
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @staticmethod
-    def from_dict(d: Dict[str, Any]) -> "Vehicle":
+    def from_dict(d: dict[str, Any]) -> "Vehicle":
         return Vehicle(**d)
 
 
 @dataclass
 class DVRPTWInstance:
     id: str
-    requests: List[Request] = field(default_factory=list)
-    vehicles: List[Vehicle] = field(default_factory=list)
+    requests: list[Request] = field(default_factory=list)
+    vehicles: list[Vehicle] = field(default_factory=list)
     weight_obj1: float = 0.5
-    seed: Optional[int] = None
-    planning_horizon: Optional[Time] = None
-    depot_ids: List[ID] = field(default_factory=list)
+    seed: int | None = None
+    planning_horizon: Time | None = None
+    depot_ids: list[ID] = field(default_factory=list)
 
     def get_request(self, req_id: ID) -> Request:
         for r in self.requests:
@@ -118,8 +118,8 @@ class DVRPTWInstance:
                     f"depot id {di} not present or not marked as depot in requests"
                 )
 
-    def pairwise_distance_matrix(self) -> Dict[Tuple[ID, ID], float]:
-        matrix: Dict[Tuple[ID, ID], float] = {}
+    def pairwise_distance_matrix(self) -> dict[tuple[ID, ID], float]:
+        matrix: dict[tuple[ID, ID], float] = {}
         for a in self.requests:
             for b in self.requests:
                 matrix[(a.id, b.id)] = euclidean(a.position, b.position)
@@ -166,7 +166,7 @@ def load_vrpr_csv(
     - the first entry is considered the depot and removed from the requests list
     """
     path = Path(csv)
-    requests: List[Request] = []
+    requests: list[Request] = []
     if not path.exists():
         raise FileNotFoundError(f"CSV file not found: {csv}")
     with path.open("r", encoding="utf-8") as fh:
@@ -212,7 +212,7 @@ def load_vrpr_csv(
     depot.is_depot = True
 
     # create vehicles
-    vehicles: List[Vehicle] = []
+    vehicles: list[Vehicle] = []
     for vid in range(num_trucks):
         v = Vehicle(
             id=vid,

@@ -14,6 +14,7 @@ from .instance import (
     DVRPTWInstance,
     euclidean,
 )
+from .solution import Solution
 
 __all__ = [
     "Time",
@@ -24,4 +25,5 @@ __all__ = [
     "Vehicle",
     "DVRPTWInstance",
     "euclidean",
+    "Solution",
 ]
