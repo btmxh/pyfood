@@ -17,8 +17,9 @@ from simulator import (
 class SimpleGreedyStrategy:
     """A simple greedy strategy for testing: dispatch vehicles to pending requests in order."""
 
-    def __init__(self):
+    def __init__(self, planning_horizon=None):
         self.actions_made = 0
+        self.planning_horizon = planning_horizon
 
     def next_events(self, state: SimulationState) -> list:
         """Dispatch available vehicles to pending requests in order."""
@@ -26,11 +27,9 @@ class SimpleGreedyStrategy:
 
         if not state.pending_requests:
             # No more pending requests, wait until end of planning horizon
-            if state.instance.planning_horizon:
-                if state.time < state.instance.planning_horizon:
-                    actions.append(
-                        WaitEvent(until_time=state.instance.planning_horizon)
-                    )
+            if self.planning_horizon:
+                if state.time < self.planning_horizon:
+                    actions.append(WaitEvent(until_time=self.planning_horizon))
             return actions
 
         # Find idle vehicles and pending requests
@@ -97,14 +96,13 @@ class TestSimulatorBasic(unittest.TestCase):
             id="test_basic",
             requests=[depot, request1, request2],
             vehicles=[vehicle1],
-            weight_obj1=0.5,
             planning_horizon=500.0,
             depot_ids=[0],
         )
 
     def test_simple_simulation(self):
         """Test a basic simulation with greedy strategy."""
-        strategy = SimpleGreedyStrategy()
+        strategy = SimpleGreedyStrategy(planning_horizon=self.instance.planning_horizon)
         simulator = Simulator(self.instance, strategy)
         result = simulator.run()
 
@@ -117,11 +115,11 @@ class TestSimulatorBasic(unittest.TestCase):
 
         # Check metrics
         self.assertGreater(result.metrics.total_travel_cost, 0)
-        self.assertEqual(result.metrics.num_accepted, 2)
+        self.assertEqual(result.metrics.accepted, 2)
 
     def test_solution_structure(self):
         """Test that solution has correct structure."""
-        strategy = SimpleGreedyStrategy()
+        strategy = SimpleGreedyStrategy(planning_horizon=self.instance.planning_horizon)
         simulator = Simulator(self.instance, strategy)
         result = simulator.run()
 
@@ -175,7 +173,6 @@ class TestSimulatorBasic(unittest.TestCase):
         # Check that request 1 was rejected
         self.assertNotIn(1, result.solution.routes[0])
         self.assertIn(1, simulator.rejected_requests)
-        self.assertEqual(result.metrics.num_rejected, 1)
 
 
 class TestSimulatorConstraints(unittest.TestCase):
@@ -292,10 +289,8 @@ class TestSimulatorTimeWindows(unittest.TestCase):
         simulator = Simulator(self.instance, strategy)
 
         # Request gets auto-rejected due to closed time window
-        # (auto-rejection happens before strategy can dispatch)
         result = simulator.run()
-        self.assertEqual(result.metrics.num_rejected, 1)
-        self.assertEqual(result.metrics.num_accepted, 0)
+        self.assertEqual(result.metrics.accepted, 0)
 
     def test_auto_reject_closed_window(self):
         """Test that requests with closed time windows are auto-rejected."""
@@ -314,7 +309,7 @@ class TestSimulatorTimeWindows(unittest.TestCase):
 
         # Request 1 should be auto-rejected due to closed time window
         self.assertIn(1, simulator.rejected_requests)
-        self.assertEqual(result.metrics.num_rejected, 1)
+        self.assertEqual(result.metrics.accepted, 0)
 
 
 class TestSimulatorMultipleVehicles(unittest.TestCase):
@@ -358,7 +353,7 @@ class TestSimulatorMultipleVehicles(unittest.TestCase):
 
     def test_multi_vehicle_dispatch(self):
         """Test dispatching across multiple vehicles."""
-        strategy = SimpleGreedyStrategy()
+        strategy = SimpleGreedyStrategy(planning_horizon=self.instance.planning_horizon)
         simulator = Simulator(self.instance, strategy)
         result = simulator.run()
 
@@ -409,8 +404,8 @@ class TestSimulatorActionCallback(unittest.TestCase):
         """Test that action callback is called for each action."""
         actions_logged = []
 
-        def callback(time, action):
-            actions_logged.append((time, action))
+        def callback(time, action, auto):
+            actions_logged.append((time, action, auto))
 
         strategy = SimpleGreedyStrategy()
         simulator = Simulator(self.instance, strategy, action_callback=callback)
@@ -420,7 +415,7 @@ class TestSimulatorActionCallback(unittest.TestCase):
         self.assertGreater(len(actions_logged), 0)
 
         # Check that all logged actions have time >= 0
-        for time, action in actions_logged:
+        for time, action, auto in actions_logged:
             self.assertGreaterEqual(time, 0.0)
 
 
@@ -453,14 +448,13 @@ class TestSimulatorMetrics(unittest.TestCase):
             id="test_metrics",
             requests=[depot, request1],
             vehicles=[vehicle1],
-            weight_obj1=0.5,
             planning_horizon=500.0,
             depot_ids=[0],
         )
 
     def test_metrics_computation(self):
         """Test that metrics are computed correctly."""
-        strategy = SimpleGreedyStrategy()
+        strategy = SimpleGreedyStrategy(planning_horizon=self.instance.planning_horizon)
         simulator = Simulator(self.instance, strategy)
         result = simulator.run()
 
@@ -470,18 +464,11 @@ class TestSimulatorMetrics(unittest.TestCase):
         self.assertGreater(metrics.total_travel_cost, 0)
 
         # Should have 1 accepted request
-        self.assertEqual(metrics.num_accepted, 1)
-
-        # Should have 0 rejected
-        self.assertEqual(metrics.num_rejected, 0)
-
-        # Weighted objective should be between 0 and 1
-        self.assertGreaterEqual(metrics.weighted_objective, 0.0)
-        self.assertLessEqual(metrics.weighted_objective, 1.0)
+        self.assertEqual(metrics.accepted, 1)
 
     def test_metrics_to_dict(self):
         """Test metrics serialization."""
-        strategy = SimpleGreedyStrategy()
+        strategy = SimpleGreedyStrategy(planning_horizon=self.instance.planning_horizon)
         simulator = Simulator(self.instance, strategy)
         result = simulator.run()
 
@@ -489,9 +476,7 @@ class TestSimulatorMetrics(unittest.TestCase):
 
         # Check that all expected keys are present
         self.assertIn("total_travel_cost", metrics_dict)
-        self.assertIn("num_accepted", metrics_dict)
-        self.assertIn("num_rejected", metrics_dict)
-        self.assertIn("weighted_objective", metrics_dict)
+        self.assertIn("accepted", metrics_dict)
 
 
 if __name__ == "__main__":

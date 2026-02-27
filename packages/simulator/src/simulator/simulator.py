@@ -1,10 +1,10 @@
 """DVRPTW simulation engine."""
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Callable, Protocol
 import heapq
 
-from .instance import DVRPTWInstance
+from .instance import DVRPTWInstance, Request
 from .solution import Solution
 
 
@@ -59,14 +59,16 @@ class VehicleState:
 
 @dataclass
 class SimulationState:
-    """Current state of the simulation."""
+    """Current state of the simulation (strategy only sees released requests)."""
 
     time: float
     pending_requests: set[int]  # request IDs not yet rejected/completed
     served_requests: set[int]  # request IDs that have been served
     rejected_requests: set[int]  # request IDs that have been rejected
     vehicles: list[VehicleState]
-    instance: DVRPTWInstance
+    released_requests: dict[
+        int, Request
+    ]  # Only released (not depot, release_time <= time) requests
 
 
 class DispatchingStrategy(Protocol):
@@ -91,17 +93,13 @@ class SimulationMetrics:
     """Performance metrics from simulation."""
 
     total_travel_cost: float
-    num_accepted: int
-    num_rejected: int
-    weighted_objective: float  # w * cost_norm + (1-w) * (1 - accept_norm)
+    accepted: int
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, float | int]:
         """Convert to dictionary for serialization."""
         return {
             "total_travel_cost": self.total_travel_cost,
-            "num_accepted": self.num_accepted,
-            "num_rejected": self.num_rejected,
-            "weighted_objective": self.weighted_objective,
+            "accepted": self.accepted,
         }
 
 
@@ -125,7 +123,7 @@ class Simulator:
         self,
         instance: DVRPTWInstance,
         strategy: DispatchingStrategy,
-        action_callback: Callable[[float, SchedulerAction], None] | None = None,
+        action_callback: Callable[[float, SchedulerAction, bool], None] | None = None,
     ):
         """
         Initialize simulator.
@@ -245,6 +243,9 @@ class Simulator:
         for req_id in to_reject:
             self.pending_requests.remove(req_id)
             self.rejected_requests.add(req_id)
+            # If action_callback exists, call with auto=True since these are simulator-driven
+            if self.action_callback:
+                self.action_callback(self.time, RejectEvent(request_id=req_id), True)
 
     def _create_state(self) -> SimulationState:
         """Create current simulation state for strategy."""
@@ -254,7 +255,11 @@ class Simulator:
             served_requests=self.served_requests.copy(),
             rejected_requests=self.rejected_requests.copy(),
             vehicles=[self._copy_vehicle_state(v) for v in self.vehicles],
-            instance=self.instance,
+            released_requests={
+                req.id: req
+                for req in self.instance.requests
+                if (not req.is_depot and req.release_time <= self.time)
+            },
         )
 
     def _copy_vehicle_state(self, v: VehicleState) -> VehicleState:
@@ -271,7 +276,8 @@ class Simulator:
     def _execute_action(self, action: SchedulerAction) -> None:
         """Execute an action from the strategy."""
         if self.action_callback:
-            self.action_callback(self.time, action)
+            # Always pass auto=False here, this is strategy actions (will update for auto actions)
+            self.action_callback(self.time, action, False)
 
         if isinstance(action, DispatchEvent):
             self._execute_dispatch(action)
@@ -405,22 +411,8 @@ class Simulator:
             total_cost += from_node.distance_to(to_node)
 
         num_accepted = len(self.served_requests)
-        num_rejected = len(self.rejected_requests)
-
-        # Normalize and compute weighted objective
-        # For now, simple normalization: assume reference values
-        max_cost = 10000.0  # placeholder
-        max_requests = len(self.pending_requests) + num_accepted + num_rejected
-
-        cost_norm = total_cost / max_cost if max_cost > 0 else 0.0
-        accept_norm = num_accepted / max_requests if max_requests > 0 else 0.0
-
-        w = self.instance.weight_obj1
-        weighted_obj = w * cost_norm + (1 - w) * (1 - accept_norm)
 
         return SimulationMetrics(
             total_travel_cost=total_cost,
-            num_accepted=num_accepted,
-            num_rejected=num_rejected,
-            weighted_objective=weighted_obj,
+            accepted=num_accepted,
         )

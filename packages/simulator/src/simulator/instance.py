@@ -93,8 +93,6 @@ class DVRPTWInstance:
     id: str
     requests: list[Request] = field(default_factory=list)
     vehicles: list[Vehicle] = field(default_factory=list)
-    weight_obj1: float = 0.5
-    seed: int | None = None
     planning_horizon: Time | None = None
     depot_ids: list[ID] = field(default_factory=list)
 
@@ -105,8 +103,6 @@ class DVRPTWInstance:
         raise KeyError(f"Request id {req_id} not found")
 
     def validate(self) -> None:
-        if not (0 <= self.weight_obj1 <= 1):
-            raise ValueError("weight_obj1 must be in [0,1]")
         for r in self.requests:
             r.time_window.validate()
         if not self.depot_ids:
@@ -130,8 +126,6 @@ class DVRPTWInstance:
             "id": self.id,
             "requests": [r.to_dict() for r in self.requests],
             "vehicles": [v.to_dict() for v in self.vehicles],
-            "weight_obj1": self.weight_obj1,
-            "seed": self.seed,
             "planning_horizon": self.planning_horizon,
             "depot_ids": self.depot_ids,
         }
@@ -146,8 +140,6 @@ class DVRPTWInstance:
             id=o.get("id", ""),
             requests=reqs,
             vehicles=vehs,
-            weight_obj1=o.get("weight_obj1", 0.5),
-            seed=o.get("seed"),
             planning_horizon=o.get("planning_horizon"),
             depot_ids=o.get("depot_ids", []),
         )
@@ -227,8 +219,6 @@ def load_vrpr_csv(
         id=path.stem,
         requests=[depot] + requests,
         vehicles=vehicles,
-        weight_obj1=0.5,
-        seed=None,
         planning_horizon=None,
         depot_ids=[depot.id],
     )
