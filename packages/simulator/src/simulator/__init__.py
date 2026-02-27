@@ -15,6 +15,18 @@ from .instance import (
     euclidean,
 )
 from .solution import Solution
+from .simulator import (
+    Simulator,
+    SimulationState,
+    SimulationResult,
+    SimulationMetrics,
+    VehicleState,
+    DispatchEvent,
+    WaitEvent,
+    RejectEvent,
+    SchedulerAction,
+    DispatchingStrategy,
+)
 
 __all__ = [
     "Time",
@@ -26,4 +38,14 @@ __all__ = [
     "DVRPTWInstance",
     "euclidean",
     "Solution",
+    "Simulator",
+    "SimulationState",
+    "SimulationResult",
+    "SimulationMetrics",
+    "VehicleState",
+    "DispatchEvent",
+    "WaitEvent",
+    "RejectEvent",
+    "SchedulerAction",
+    "DispatchingStrategy",
 ]

@@ -120,6 +120,34 @@ Key methods:
 - `to_json()`/`from_json()`: Serialization
 - `pairwise_distance()`: Precomputed distance matrix
 
+### Simulation Engine (`simulator.Simulator`)
+
+The simulator implements the DVRPTW simulation loop with a pluggable dispatching strategy:
+
+**Core API:**
+```python
+simulator = Simulator(instance, strategy, action_callback=None)
+result = simulator.run()  # Returns SimulationResult
+```
+
+**How it works:**
+1. Strategy implements `DispatchingStrategy.next_events(state: SimulationState) -> list[SchedulerAction]`
+2. Simulator calls strategy at each event (request arrivals, vehicle completions, wake-ups)
+3. Strategy returns actions: `DispatchEvent`, `WaitEvent`, or `RejectEvent`
+4. Simulator validates constraints and advances time accordingly
+5. Final result includes routes, service times, and metrics
+
+**Key constraints enforced:**
+- Vehicle capacity limits (checked on dispatch)
+- Time window feasibility (service start must be in [earliest, latest])
+- Auto-rejection of requests with closed time windows
+
+**Design for Rust migration:**
+- The simulator uses simple, copyable data structures (lists, sets, floats) suitable for FFI
+- No complex object graphs or circular references
+- Event loop is straightforward: process event → call strategy → validate → update state
+- In future Rust implementation, the C API would accept strategy callbacks via function pointers
+
 ### Workspace Dependencies
 
 The `simulator` package depends on `rsimulator` (Rust extension). When making changes:
