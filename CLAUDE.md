@@ -17,13 +17,14 @@ See `docs/STATEMENT.md` for the complete problem formulation.
 
 This is a monorepo using uv workspace with two main packages:
 
-- **`packages/simulator/`**: Pure Python package for DVRPTW instance models and solution representation
-  - Contains `DVRPTWInstance` (problem instances) and `Solution` (algorithm output)
-  - Uses PEP 517/518 src layout: importable as `simulator`
+- **`packages/dvrptw/`**: Pure Python package — DVRPTW domain library (instance models, solution representation, simulation engine)
+  - Contains `DVRPTWInstance`, `Solution`, `PythonSimulator`, `RustSimulator`, and related types
+  - Uses PEP 517/518 src layout: importable as `dvrptw`
+  - Source split across: `instance.py`, `solution.py`, `events.py`, `state.py`, `python_simulator.py`, `rust_simulator.py`
 
 - **`packages/rsimulator/`**: Rust performance module using PyO3/maturin
-  - Python bindings to Rust code for performance-critical operations
-  - Currently contains placeholder code; intended for simulation engine
+  - Python bindings to Rust code for performance-critical simulation
+  - Used internally by `dvrptw.RustSimulator`
 
 The root `pyproject.toml` defines the workspace and main project dependencies.
 
@@ -44,14 +45,14 @@ uv sync
 uv run pytest
 
 # Run tests for specific package
-uv run pytest packages/simulator/tests/
+uv run pytest packages/dvrptw/tests/
 uv run pytest packages/rsimulator/
 
 # Run single test file
-uv run pytest packages/simulator/tests/test_simulator_instance.py
+uv run pytest packages/dvrptw/tests/test_simulator_instance.py
 
 # Run specific test
-uv run pytest packages/simulator/tests/test_simulator_instance.py::TestSimulatorInstance::test_load_vrpr_csv_basic
+uv run pytest packages/dvrptw/tests/test_simulator_instance.py::TestSimulatorInstance::test_load_vrpr_csv_basic
 ```
 
 ### Building Rust Extension
@@ -90,7 +91,7 @@ Do not import `List`, `Dict`, `Tuple` from the `typing` module unless using olde
 
 ## Architecture Notes
 
-### Solution Representation (`simulator.Solution`)
+### Solution Representation (`dvrptw.Solution`)
 
 The solution structure is intentionally minimal to provide a uniform API for algorithms:
 
@@ -107,7 +108,7 @@ class Solution:
 - Everything else (arrival times, wait times, costs, feasibility) should be computed by evaluator functions taking `(solution, instance)`
 - Algorithms output simple lists; no need to maintain complex internal state
 
-### Instance Model (`simulator.DVRPTWInstance`)
+### Instance Model (`dvrptw.DVRPTWInstance`)
 
 Contains:
 - Depot and customer requests (positions, demands, time windows, service times)
@@ -120,13 +121,13 @@ Key methods:
 - `to_json()`/`from_json()`: Serialization
 - `pairwise_distance()`: Precomputed distance matrix
 
-### Simulation Engine (`simulator.Simulator`)
+### Simulation Engine (`dvrptw.Simulator`)
 
 The simulator implements the DVRPTW simulation loop with a pluggable dispatching strategy:
 
 **Core API:**
 ```python
-simulator = Simulator(instance, strategy, action_callback=None)
+simulator = PythonSimulator(instance, strategy, action_callback=None)
 result = simulator.run()  # Returns SimulationResult
 ```
 
@@ -142,18 +143,16 @@ result = simulator.run()  # Returns SimulationResult
 - Time window feasibility (service start must be in [earliest, latest])
 - Auto-rejection of requests with closed time windows
 
-**Design for Rust migration:**
-- The simulator uses simple, copyable data structures (lists, sets, floats) suitable for FFI
-- No complex object graphs or circular references
-- Event loop is straightforward: process event → call strategy → validate → update state
-- In future Rust implementation, the C API would accept strategy callbacks via function pointers
+**Backends:**
+- `PythonSimulator` — pure Python, always available
+- `RustSimulator` — delegates to `rsimulator` extension; requires `maturin develop`
 
 ### Workspace Dependencies
 
-The `simulator` package depends on `rsimulator` (Rust extension). When making changes:
+The `dvrptw` package depends on `rsimulator` (Rust extension). When making changes:
 1. Build `rsimulator` first if modifying Rust code
 2. The workspace ensures consistent dependency resolution via `uv.lock`
 
 ## Testing Data
 
-Test datasets are located in `packages/simulator/tests/data/` (local copies to avoid external dependencies). The standard format is CSV files from the VRPR benchmark set.
+Test datasets are located in `packages/dvrptw/tests/data/` (local copies to avoid external dependencies). The standard format is CSV files from the VRPR benchmark set.

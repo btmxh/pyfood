@@ -4,9 +4,9 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
+    "dvrptw",
     "pyfood",
     "rsimulator",
-    "simulator",
 ]
 
 [[package]]
@@ -17,6 +17,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
 ]
+
+[[package]]
+name = "dvrptw"
+version = "0.1.0"
+source = { editable = "packages/dvrptw" }
+dependencies = [
+    { name = "rsimulator" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "rsimulator", editable = "packages/rsimulator" }]
 
 [[package]]
 name = "iniconfig"
@@ -46,12 +57,22 @@ wheels = [
 ]
 
 [[package]]
+name = "pulp"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/1c/d880b739b841a8aa81143091c9bdda5e72e226a660aa13178cb312d4b27f/pulp-3.3.0.tar.gz", hash = "sha256:7eb99b9ce7beeb8bbb7ea9d1c919f02f003ab7867e0d1e322f2f2c26dd31c8ba", size = 16301847, upload-time = "2025-09-18T08:14:57.552Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/6c/64cafaceea3f99927e84b38a362ec6a8f24f33061c90bda77dfe1cd4c3c6/pulp-3.3.0-py3-none-any.whl", hash = "sha256:dd6ad2d63f196d1254eddf9dcff5cd224912c1f046120cb7c143c5b0eda63fae", size = 16387700, upload-time = "2025-09-18T08:14:53.368Z" },
+]
+
+[[package]]
 name = "pyfood"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "dvrptw" },
+    { name = "pulp" },
     { name = "rsimulator" },
-    { name = "simulator" },
     { name = "tqdm" },
 ]
 
@@ -63,8 +84,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dvrptw", editable = "packages/dvrptw" },
+    { name = "pulp", specifier = ">=3.3.0" },
     { name = "rsimulator", editable = "packages/rsimulator" },
-    { name = "simulator", editable = "packages/simulator" },
     { name = "tqdm" },
 ]
 
@@ -127,17 +149,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/a8/c688ef7e29983976820d18710f955751d9f4d4eb69df658af3d006e2ba3e/ruff-0.15.4-py3-none-win_amd64.whl", hash = "sha256:04196ad44f0df220c2ece5b0e959c2f37c777375ec744397d21d15b50a75264f", size = 11651048, upload-time = "2026-02-26T20:04:17.191Z" },
     { url = "https://files.pythonhosted.org/packages/3e/0a/9e1be9035b37448ce2e68c978f0591da94389ade5a5abafa4cf99985d1b2/ruff-0.15.4-py3-none-win_arm64.whl", hash = "sha256:60d5177e8cfc70e51b9c5fad936c634872a74209f934c1e79107d11787ad5453", size = 10966776, upload-time = "2026-02-26T20:03:56.908Z" },
 ]
-
-[[package]]
-name = "simulator"
-version = "0.1.0"
-source = { editable = "packages/simulator" }
-dependencies = [
-    { name = "rsimulator" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "rsimulator", editable = "packages/rsimulator" }]
 
 [[package]]
 name = "tqdm"

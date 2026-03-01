@@ -1,12 +1,12 @@
 """Tests for the DVRPTW simulator engine."""
 
 import unittest
-from simulator import (
+from dvrptw import (
     DVRPTWInstance,
     Request,
     Vehicle,
     TimeWindow,
-    Simulator,
+    PythonSimulator as Simulator,
     SimulationState,
     DispatchEvent,
     WaitEvent,
@@ -115,7 +115,7 @@ class TestSimulatorBasic(unittest.TestCase):
 
         # Check metrics
         self.assertGreater(result.metrics.total_travel_cost, 0)
-        self.assertEqual(result.metrics.accepted, 2)
+        self.assertEqual(result.metrics.rejected, 0)
 
     def test_solution_structure(self):
         """Test that solution has correct structure."""
@@ -290,7 +290,7 @@ class TestSimulatorTimeWindows(unittest.TestCase):
 
         # Request gets auto-rejected due to closed time window
         result = simulator.run()
-        self.assertEqual(result.metrics.accepted, 0)
+        self.assertEqual(result.metrics.rejected, 1)
 
     def test_auto_reject_closed_window(self):
         """Test that requests with closed time windows are auto-rejected."""
@@ -309,7 +309,7 @@ class TestSimulatorTimeWindows(unittest.TestCase):
 
         # Request 1 should be auto-rejected due to closed time window
         self.assertIn(1, simulator.rejected_requests)
-        self.assertEqual(result.metrics.accepted, 0)
+        self.assertEqual(result.metrics.rejected, 1)
 
 
 class TestSimulatorMultipleVehicles(unittest.TestCase):
@@ -463,8 +463,8 @@ class TestSimulatorMetrics(unittest.TestCase):
         # Travel cost should be positive (depot -> request1 -> depot = 5 + 5 = 10)
         self.assertGreater(metrics.total_travel_cost, 0)
 
-        # Should have 1 accepted request
-        self.assertEqual(metrics.accepted, 1)
+        # Should have 0 rejected requests (1 served)
+        self.assertEqual(metrics.rejected, 0)
 
     def test_metrics_to_dict(self):
         """Test metrics serialization."""
@@ -476,7 +476,7 @@ class TestSimulatorMetrics(unittest.TestCase):
 
         # Check that all expected keys are present
         self.assertIn("total_travel_cost", metrics_dict)
-        self.assertIn("accepted", metrics_dict)
+        self.assertIn("rejected", metrics_dict)
 
 
 if __name__ == "__main__":

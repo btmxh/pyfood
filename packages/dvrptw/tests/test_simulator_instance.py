@@ -1,12 +1,12 @@
 import unittest
 from pathlib import Path
-import simulator.instance as inst_mod
+import dvrptw.instance as inst_mod
 
 
 class TestSimulatorInstance(unittest.TestCase):
     def test_load_vrpr_csv_basic(self):
         # prefer local copy in the package tests data to avoid depending on .temp_third_party
-        csv = Path("packages/simulator/tests/data/h100rc101.csv")
+        csv = Path("packages/dvrptw/tests/data/h100rc101.csv")
         self.assertTrue(csv.exists(), f"test data missing: {csv}")
         inst = inst_mod.load_vrpr_csv(
             str(csv), truck_speed=1.0, truck_capacity=100.0, num_trucks=5

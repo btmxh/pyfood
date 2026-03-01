@@ -1,7 +1,6 @@
-"""Simulator package for DVRPTW instance models.
+"""DVRPTW — problem instance models, solution representation, and simulation engine.
 
-This module lives under `packages/simulator/src/simulator` so the package is
-installed/importable as `simulator` (PEP 517/518 layout).
+Importable as ``dvrptw`` (PEP 517/518 src layout under packages/dvrptw/src/dvrptw).
 """
 
 from .instance import (
@@ -15,17 +14,26 @@ from .instance import (
     euclidean,
 )
 from .solution import Solution
+from .evaluator import (
+    Evaluator,
+    WeightedSumEvaluator,
+    LinearNormEvaluator,
+    StarNormEvaluator,
+)
+from .strategies import ILPStrategy
 from .simulator import (
-    Simulator,
-    SimulationState,
-    SimulationResult,
-    SimulationMetrics,
-    VehicleState,
     DispatchEvent,
     WaitEvent,
     RejectEvent,
     SchedulerAction,
+    VehicleState,
+    SimulationState,
     DispatchingStrategy,
+    SimulationMetrics,
+    SimulationResult,
+    Simulator,
+    PythonSimulator,
+    RustSimulator,
 )
 
 __all__ = [
@@ -38,7 +46,13 @@ __all__ = [
     "DVRPTWInstance",
     "euclidean",
     "Solution",
+    "Evaluator",
+    "WeightedSumEvaluator",
+    "LinearNormEvaluator",
+    "StarNormEvaluator",
     "Simulator",
+    "PythonSimulator",
+    "RustSimulator",
     "SimulationState",
     "SimulationResult",
     "SimulationMetrics",
@@ -48,4 +62,5 @@ __all__ = [
     "RejectEvent",
     "SchedulerAction",
     "DispatchingStrategy",
+    "ILPStrategy",
 ]
