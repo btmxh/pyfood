@@ -9,7 +9,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use pyo3::prelude::*;
 
-use crate::instance::{InstanceView, RoutingStrategy, RustStrategy, SchedulingStrategy};
+use super::{RoutingStrategy, SchedulingStrategy};
+use crate::instance::{InstanceView, RustStrategy};
 use crate::types::{
     NativeStrategyWrapper, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
 };

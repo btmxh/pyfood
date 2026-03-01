@@ -25,7 +25,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
-use crate::instance::{BatchRoutingStrategy, InstanceView, RustStrategy, SchedulingStrategy};
+use super::{BatchRoutingStrategy, SchedulingStrategy};
+use crate::instance::{InstanceView, RustStrategy};
 use crate::types::{
     NativeStrategyWrapper, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
 };

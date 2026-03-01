@@ -5,6 +5,11 @@
 /// - [`composable`] — template combining per-request router + scheduler
 /// - [`batch`]      — template combining slot-based batch router + scheduler
 ///
+/// # Sub-traits
+/// - [`RoutingStrategy`]      — assign a single released request to a vehicle (or reject)
+/// - [`SchedulingStrategy`]   — choose the next request for an idle vehicle
+/// - [`BatchRoutingStrategy`] — assign a whole batch of requests at once
+///
 /// # Shared helpers
 /// Python dict builders for [`crate::types::VehicleSnapshot`] and
 /// [`crate::instance::InstanceView`] used by all Python-bridged sub-strategies.
@@ -20,7 +25,77 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::instance::InstanceView;
-use crate::types::VehicleSnapshot;
+use crate::types::{RequestId, VehicleSnapshot};
+
+// ---------------------------------------------------------------------------
+// RoutingStrategy and SchedulingStrategy — composable strategy sub-traits
+// ---------------------------------------------------------------------------
+
+/// Decides which vehicle to assign a released request to, or rejects it.
+///
+/// Called exactly once per request, on the tick it first appears in
+/// `SimulationSnapshot::released`.
+pub trait RoutingStrategy: Send + Sync {
+    /// Called once before the simulation loop starts.
+    /// Override to cache instance data needed for routing decisions.
+    fn initialize(&mut self, _view: &InstanceView<'_>) {}
+
+    /// Return `Some(vehicle_id)` to assign `request` to that vehicle's queue,
+    /// or `None` to reject it immediately.
+    fn route(
+        &mut self,
+        request: RequestId,
+        vehicles: &[VehicleSnapshot],
+        view: &InstanceView<'_>,
+    ) -> Option<i64>;
+}
+
+/// Decides which queued request a vehicle should serve next.
+///
+/// Called each time an idle vehicle has a non-empty pending queue.
+pub trait SchedulingStrategy: Send + Sync {
+    /// Called once before the simulation loop starts.
+    /// Override to cache instance data needed for scheduling decisions.
+    fn initialize(&mut self, _view: &InstanceView<'_>) {}
+
+    /// Return a `RequestId` from `queue` to dispatch next.
+    ///
+    /// # Panics
+    /// Panics in debug builds if the returned ID is not present in `queue`.
+    fn schedule(
+        &mut self,
+        vehicle: &VehicleSnapshot,
+        queue: &[RequestId],
+        view: &InstanceView<'_>,
+    ) -> RequestId;
+}
+
+// ---------------------------------------------------------------------------
+// BatchRoutingStrategy — slot-based variant of RoutingStrategy
+// ---------------------------------------------------------------------------
+
+/// Decides vehicle assignments for a whole batch of released requests at once.
+///
+/// Called by [`BatchComposableStrategy`] at the end of each time slot with all
+/// requests that have been released during that slot but not yet routed.
+pub trait BatchRoutingStrategy: Send + Sync {
+    /// Called once before the simulation loop starts.
+    fn initialize(&mut self, _view: &InstanceView<'_>) {}
+
+    /// Return one `(RequestId, Option<vehicle_id>)` pair per input request.
+    ///
+    /// - `Some(vehicle_id)` → assign the request to that vehicle's queue.
+    /// - `None`             → reject the request immediately.
+    ///
+    /// The returned `Vec` must contain exactly one entry for each element of
+    /// `requests` (assertion enforced in debug builds by the caller).
+    fn route_batch(
+        &mut self,
+        requests: &[RequestId],
+        vehicles: &[VehicleSnapshot],
+        view: &InstanceView<'_>,
+    ) -> Vec<(RequestId, Option<i64>)>;
+}
 
 // ---------------------------------------------------------------------------
 // Shared Python dict builders (used by composable and batch adapters)
