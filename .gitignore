@@ -3,6 +3,9 @@
 /.temp_third_party
 /.pre-commit-config.yaml
 
+# Rust target directory
+target
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 .pytest_cache/
