@@ -182,6 +182,10 @@ impl RustStrategy for ComposableStrategy {
     ) -> Vec<SimAction> {
         let mut actions: Vec<SimAction> = Vec::new();
 
+        // Notify sub-strategies of the current tick time.
+        self.router.begin_tick(state.time);
+        self.scheduler.begin_tick(state.time);
+
         // Phase 1: route newly-released requests (exactly once per request).
         let mut new_requests: Vec<RequestId> = state
             .released

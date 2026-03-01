@@ -9,10 +9,12 @@
 /// py_bridge.rs          ← PyO3 glue: PyStrategyAdapter, PyCallbackAdapter, dict/action helpers
 /// simulator.rs          ← Simulator #[pyclass] + all impl blocks
 /// strategies/
-///   mod.rs              ← re-exports + shared Python dict builders
+///   mod.rs              ← re-exports, sub-traits, shared Python dict builders
 ///   greedy.rs           ← GreedyRustStrategy + greedy_strategy()
 ///   composable.rs       ← ComposableStrategy + per-request adapters + composable_strategy()
 ///   batch.rs            ← BatchComposableStrategy + batch adapter + batch_composable_strategy()
+///   gp_tree.rs          ← GpTree #[pyclass] + Tree/Terminal/Node + factory functions
+///   gp_strategy.rs      ← GpRoutingStrategy, GpSchedulingStrategy, gp_strategy()
 /// ```
 ///
 /// # Hot path (native strategy)
@@ -27,14 +29,17 @@
 /// Python strategies fall back to [`PyStrategyAdapter`] which acquires the GIL
 /// only for the strategy call, concentrating all serialisation overhead in one
 /// place.
-mod instance;
+pub mod instance;
 mod py_bridge;
 mod simulator;
-mod strategies;
-mod types;
+pub mod strategies;
+pub mod types;
 
 pub use simulator::Simulator;
-pub use strategies::{batch_composable_strategy, composable_strategy, greedy_strategy};
+pub use strategies::{
+    ComposableStrategy, batch_composable_strategy, composable_strategy, greedy_strategy,
+};
+pub use strategies::{RoutingStrategy, SchedulingStrategy};
 pub use types::{NativeCallbackWrapper, NativeStrategyWrapper};
 
 use pyo3::prelude::*;
@@ -44,8 +49,31 @@ fn rsimulator(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Simulator>()?;
     m.add_class::<NativeStrategyWrapper>()?;
     m.add_class::<NativeCallbackWrapper>()?;
+    // Built-in strategies
     m.add_function(wrap_pyfunction!(greedy_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(composable_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(batch_composable_strategy, m)?)?;
+    // GP strategy
+    m.add_class::<strategies::gp_tree::GpTree>()?;
+    m.add_function(wrap_pyfunction!(strategies::gp_strategy::gp_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_const, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_add, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_sub, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_mul, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_div, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_travel_time, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_tree::gp_window_earliest,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_window_latest, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_time_until_due, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_demand, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_current_load, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_tree::gp_remaining_capacity,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_release_time, m)?)?;
     Ok(())
 }

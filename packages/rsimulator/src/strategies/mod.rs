@@ -1,9 +1,9 @@
 /// strategies/ — Native Rust dispatching strategy implementations.
 ///
 /// # Modules
-/// - [`greedy`]     — greedy dispatch in ascending request-ID order
-/// - [`composable`] — template combining per-request router + scheduler
-/// - [`batch`]      — template combining slot-based batch router + scheduler
+/// - [`greedy`]      — greedy dispatch in ascending request-ID order
+/// - [`composable`]  — template combining per-request router + scheduler
+/// - [`batch`]       — template combining slot-based batch router + scheduler
 ///
 /// # Sub-traits
 /// - [`RoutingStrategy`]      — assign a single released request to a vehicle (or reject)
@@ -15,10 +15,17 @@
 /// [`crate::instance::InstanceView`] used by all Python-bridged sub-strategies.
 pub mod batch;
 pub mod composable;
+pub mod gp_strategy;
+pub mod gp_tree;
 pub mod greedy;
 
 pub use batch::batch_composable_strategy;
-pub use composable::composable_strategy;
+pub use composable::{ComposableStrategy, composable_strategy};
+pub use gp_tree::{
+    GpTree, gp_add, gp_const, gp_current_load, gp_demand, gp_div, gp_mul, gp_release_time,
+    gp_remaining_capacity, gp_sub, gp_time_until_due, gp_travel_time, gp_window_earliest,
+    gp_window_latest,
+};
 pub use greedy::greedy_strategy;
 
 use pyo3::prelude::*;
@@ -40,6 +47,12 @@ pub trait RoutingStrategy: Send + Sync {
     /// Override to cache instance data needed for routing decisions.
     fn initialize(&mut self, _view: &InstanceView<'_>) {}
 
+    /// Called at the start of each simulation tick with the current time.
+    ///
+    /// Override to update any time-dependent state (e.g. `TimeUntilDue` scoring).
+    /// The default implementation is a no-op.
+    fn begin_tick(&mut self, _time: f64) {}
+
     /// Return `Some(vehicle_id)` to assign `request` to that vehicle's queue,
     /// or `None` to reject it immediately.
     fn route(
@@ -57,6 +70,12 @@ pub trait SchedulingStrategy: Send + Sync {
     /// Called once before the simulation loop starts.
     /// Override to cache instance data needed for scheduling decisions.
     fn initialize(&mut self, _view: &InstanceView<'_>) {}
+
+    /// Called at the start of each simulation tick with the current time.
+    ///
+    /// Override to update any time-dependent state (e.g. `TimeUntilDue` scoring).
+    /// The default implementation is a no-op.
+    fn begin_tick(&mut self, _time: f64) {}
 
     /// Return a `RequestId` from `queue` to dispatch next.
     ///
