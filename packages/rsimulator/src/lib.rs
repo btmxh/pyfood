@@ -3,12 +3,16 @@
 /// # Module layout
 ///
 /// ```text
-/// lib.rs          ← this file: mod declarations + #[pymodule] registration
-/// types.rs        ← RequestId, SimAction, snapshots, NativeStrategyWrapper/NativeCallbackWrapper
-/// instance.rs     ← Request, VehicleSpec, VehicleState, event queue, InstanceView, strategy traits
-/// py_bridge.rs    ← PyO3 glue: PyStrategyAdapter, PyCallbackAdapter, dict/action helpers
-/// strategies.rs   ← GreedyRustStrategy + greedy_strategy() #[pyfunction]
-/// simulator.rs    ← Simulator #[pyclass] + all impl blocks
+/// lib.rs                ← this file: mod declarations + #[pymodule] registration
+/// types.rs              ← RequestId, SimAction, snapshots, NativeStrategyWrapper/NativeCallbackWrapper
+/// instance.rs           ← Request, VehicleSpec, VehicleState, event queue, InstanceView, strategy traits
+/// py_bridge.rs          ← PyO3 glue: PyStrategyAdapter, PyCallbackAdapter, dict/action helpers
+/// simulator.rs          ← Simulator #[pyclass] + all impl blocks
+/// strategies/
+///   mod.rs              ← re-exports + shared Python dict builders
+///   greedy.rs           ← GreedyRustStrategy + greedy_strategy()
+///   composable.rs       ← ComposableStrategy + per-request adapters + composable_strategy()
+///   batch.rs            ← BatchComposableStrategy + batch adapter + batch_composable_strategy()
 /// ```
 ///
 /// # Hot path (native strategy)
@@ -30,7 +34,7 @@ mod strategies;
 mod types;
 
 pub use simulator::Simulator;
-pub use strategies::greedy_strategy;
+pub use strategies::{batch_composable_strategy, composable_strategy, greedy_strategy};
 pub use types::{NativeCallbackWrapper, NativeStrategyWrapper};
 
 use pyo3::prelude::*;
@@ -41,5 +45,7 @@ fn rsimulator(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<NativeStrategyWrapper>()?;
     m.add_class::<NativeCallbackWrapper>()?;
     m.add_function(wrap_pyfunction!(greedy_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(composable_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_composable_strategy, m)?)?;
     Ok(())
 }

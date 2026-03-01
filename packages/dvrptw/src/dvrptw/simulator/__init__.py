@@ -10,19 +10,12 @@ from .state import (
 )
 from .base import Simulator
 from .python import PythonSimulator
-from .rust import RustSimulator
-
-# Native strategy/callback wrappers — only available when rsimulator is built.
-try:
-    from .rust import NativeStrategyWrapper, NativeCallbackWrapper, greedy_strategy  # noqa: F401
-
-    _NATIVE_EXPORTS = [
-        "NativeStrategyWrapper",
-        "NativeCallbackWrapper",
-        "greedy_strategy",
-    ]
-except ImportError:
-    _NATIVE_EXPORTS = []
+from .rust import (
+    RustSimulator,
+    NativeStrategyWrapper,
+    NativeCallbackWrapper,
+    greedy_strategy,
+)  # noqa: F401
 
 __all__ = [
     "DispatchEvent",
@@ -37,4 +30,7 @@ __all__ = [
     "Simulator",
     "PythonSimulator",
     "RustSimulator",
-] + _NATIVE_EXPORTS
+    "NativeStrategyWrapper",
+    "NativeCallbackWrapper",
+    "greedy_strategy",
+]

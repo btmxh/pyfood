@@ -12,13 +12,6 @@ the test runner.
 import unittest
 from typing import ClassVar
 
-try:
-    import rsimulator as _rsim  # noqa: F401
-
-    RUST_AVAILABLE = hasattr(_rsim, "Simulator")
-except ImportError:
-    RUST_AVAILABLE = False
-
 from dvrptw import (
     DVRPTWInstance,
     Request,
@@ -365,9 +358,6 @@ class TestParityPython(_ParityBase):
     SimCls = PythonSimulator
 
 
-@unittest.skipUnless(
-    RUST_AVAILABLE, "rsimulator extension not built; run: maturin develop"
-)
 class TestParityRust(_ParityBase):
     __test__ = True
     SimCls = RustSimulator
@@ -378,9 +368,6 @@ class TestParityRust(_ParityBase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(
-    RUST_AVAILABLE, "rsimulator extension not built; run: maturin develop"
-)
 class TestCrossBackendParity(unittest.TestCase):
     def _assert_parity(self, inst):
         py_res = PythonSimulator(inst, SimpleGreedyStrategy()).run()
@@ -413,9 +400,6 @@ class TestCrossBackendParity(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(
-    RUST_AVAILABLE, "rsimulator extension not built; run: maturin develop"
-)
 class TestRustSpecific(unittest.TestCase):
     def test_callback_receives_python_objects(self):
         """Action callback receives DispatchEvent/WaitEvent/RejectEvent, not dicts."""
@@ -461,9 +445,6 @@ class TestRustSpecific(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(
-    RUST_AVAILABLE, "rsimulator extension not built; run: maturin develop"
-)
 class TestNativeStrategy(unittest.TestCase):
     def setUp(self):
         from rsimulator import greedy_strategy, NativeStrategyWrapper

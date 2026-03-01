@@ -51,15 +51,8 @@ from dvrptw.simulator.events import (
     SchedulerAction,
 )
 from dvrptw.simulator.state import SimulationState
-from dvrptw import PythonSimulator, ILPStrategy, StarNormEvaluator
-
-try:
-    from dvrptw import RustSimulator
-    from rsimulator import greedy_strategy
-
-    RUST_AVAILABLE = True
-except ImportError:
-    RUST_AVAILABLE = False
+from dvrptw import PythonSimulator, RustSimulator, ILPStrategy, StarNormEvaluator
+from rsimulator import greedy_strategy
 
 
 # ---------------------------------------------------------------------------
@@ -351,29 +344,26 @@ def run_benchmark() -> list[RunResult]:
     print("=" * 60)
     print("Running GreedyRust (causal, native Rust strategy)...")
     print("=" * 60)
-    if not RUST_AVAILABLE:
-        print("  (skipped — rsimulator not built)")
-    else:
-        t0 = time.perf_counter()
-        strategy = greedy_strategy()
-        sim = RustSimulator(instance, strategy)
-        result = sim.run()
-        elapsed = time.perf_counter() - t0
-        print(
-            f"  (weight-agnostic)  rejected={result.metrics.rejected}/{n_customers}"
-            f"  cost={result.metrics.total_travel_cost:.2f}  time={elapsed:.3f}s"
-        )
-        for w in weights:
-            results.append(
-                RunResult(
-                    strategy_name="GreedyRust",
-                    weight=w,
-                    rejected=result.metrics.rejected,
-                    total_requests=n_customers,
-                    travel_cost=result.metrics.total_travel_cost,
-                    wall_time_s=elapsed,
-                )
+    t0 = time.perf_counter()
+    strategy = greedy_strategy()
+    sim = RustSimulator(instance, strategy)
+    result = sim.run()
+    elapsed = time.perf_counter() - t0
+    print(
+        f"  (weight-agnostic)  rejected={result.metrics.rejected}/{n_customers}"
+        f"  cost={result.metrics.total_travel_cost:.2f}  time={elapsed:.3f}s"
+    )
+    for w in weights:
+        results.append(
+            RunResult(
+                strategy_name="GreedyRust",
+                weight=w,
+                rejected=result.metrics.rejected,
+                total_requests=n_customers,
+                travel_cost=result.metrics.total_travel_cost,
+                wall_time_s=elapsed,
             )
+        )
 
     return results
 

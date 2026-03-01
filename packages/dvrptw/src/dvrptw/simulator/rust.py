@@ -1,9 +1,13 @@
 """Rust-backed simulation engine and its Python-side adapters."""
 
-from typing import TYPE_CHECKING, Callable, cast
+from typing import Callable, cast
 
-if TYPE_CHECKING:
-    from rsimulator import NativeStrategyWrapper as _NativeStrategyWrapperT
+from rsimulator import (  # noqa: F401
+    Simulator as _RustSimulator,
+    NativeStrategyWrapper,
+    NativeCallbackWrapper,
+    greedy_strategy,
+)
 
 from .events import RejectEvent, SchedulerAction
 from ..instance import DVRPTWInstance, Request
@@ -17,19 +21,6 @@ from .state import (
     VehicleState,
 )
 
-# Re-export the native strategy/callback wrapper types so users can import them
-# from dvrptw.simulator without importing rsimulator directly.
-try:
-    from rsimulator import (  # noqa: F401
-        NativeStrategyWrapper,
-        NativeCallbackWrapper,
-        greedy_strategy,
-    )
-except ImportError:
-    # rsimulator not built yet — these names will be absent.
-    # RustSimulator.__init__ will raise ImportError if actually used.
-    pass
-
 
 class RustSimulator(Simulator):
     """Rust-backed DVRPTW simulation engine via the ``rsimulator`` extension.
@@ -38,28 +29,14 @@ class RustSimulator(Simulator):
     ``NativeStrategyWrapper`` instances returned by factory functions such as
     :func:`rsimulator.greedy_strategy`.  When a native wrapper is passed the
     simulation hot path runs entirely in Rust with no GIL acquisition.
-
-    Raises ``ImportError`` at construction time if the extension is not built.
     """
 
     def __init__(
         self,
         instance: DVRPTWInstance,
-        strategy: "DispatchingStrategy | _NativeStrategyWrapperT",
+        strategy: "DispatchingStrategy | NativeStrategyWrapper",
         action_callback: Callable[[float, SchedulerAction, bool], None] | None = None,
     ):
-        try:
-            from rsimulator import (
-                Simulator as _RustSimulator,
-                NativeStrategyWrapper as _NativeStrategyWrapper,
-                NativeCallbackWrapper as _NativeCallbackWrapper,
-            )
-        except ImportError as exc:
-            raise ImportError(
-                "RustSimulator requires the 'rsimulator' extension. "
-                "Build it with: cd packages/rsimulator && maturin develop"
-            ) from exc
-
         super().__init__(instance, strategy, action_callback)
 
         # If the strategy is already a NativeStrategyWrapper, pass it directly —
@@ -69,7 +46,7 @@ class RustSimulator(Simulator):
         # Otherwise wrap it in _RustStrategyAdapter so it receives a proper
         # SimulationState object (with attribute access) rather than the raw dict
         # that the Rust-side PyStrategyAdapter produces.
-        if isinstance(strategy, _NativeStrategyWrapper):
+        if isinstance(strategy, NativeStrategyWrapper):
             effective_strategy = strategy
         else:
             effective_strategy = _RustStrategyAdapter(strategy, instance)
@@ -78,7 +55,7 @@ class RustSimulator(Simulator):
         # a Python callable is wrapped so it receives typed action objects.
         if action_callback is None:
             effective_callback = None
-        elif isinstance(action_callback, _NativeCallbackWrapper):
+        elif isinstance(action_callback, NativeCallbackWrapper):
             effective_callback = action_callback
         else:
             effective_callback = _RustCallbackAdapter(action_callback)
