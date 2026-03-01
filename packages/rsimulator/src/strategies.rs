@@ -115,21 +115,6 @@ impl RustStrategy for GreedyRustStrategy {
             // No feasible request found for this vehicle; leave it idle.
         }
 
-        // If nothing was dispatched and vehicles are busy, schedule a wake-up
-        if actions.is_empty() {
-            let next_vehicle_time = state
-                .vehicles
-                .iter()
-                .map(|v| v.available_at)
-                .filter(|&t| t > state.time)
-                .fold(f64::INFINITY, f64::min);
-            if next_vehicle_time.is_finite() {
-                actions.push(SimAction::Wait {
-                    until: next_vehicle_time,
-                });
-            }
-        }
-
         actions
     }
 }
