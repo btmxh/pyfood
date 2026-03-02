@@ -1,6 +1,0 @@
-#!/usr/bin/env sh
-docker compose run --rm dev sh -c '
-  uv sync &&
-  exec uv tool run ty "$@"
-' sh "$@"
-# vim: set ft=sh ts=2 sw=2 sts=2 et ai:
