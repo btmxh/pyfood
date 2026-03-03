@@ -2,7 +2,7 @@
 
 from typing import Callable, cast
 
-from rsimulator import (  # noqa: F401
+from .rsimulator import (  # noqa: F401
     Simulator as _RustSimulator,
     NativeStrategyWrapper,
     NativeCallbackWrapper,
@@ -53,7 +53,15 @@ class RustSimulator(Simulator):
         if type(strategy).__name__ == "NativeStrategyWrapper":
             effective_strategy = strategy
         else:
-            effective_strategy = _RustStrategyAdapter(strategy, instance)
+            # `strategy` here is known to be a Python DispatchingStrategy
+            # (the NativeStrategyWrapper case is handled above).  Narrow the
+            # type for static checkers with an explicit cast so linters
+            # understand we are passing a DispatchingStrategy instance.
+            from typing import cast
+
+            effective_strategy = _RustStrategyAdapter(
+                cast(DispatchingStrategy, strategy), instance
+            )
 
         # Same logic for the callback: NativeCallbackWrapper passes through;
         # a Python callable is wrapped so it receives typed action objects.
