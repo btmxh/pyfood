@@ -49,6 +49,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+import os
+import shutil
 
 import pulp
 
@@ -108,6 +110,7 @@ def _solve_vrptw(
     time_limit_s: float,
     mip_gap: float,
     msg: bool,
+    cbc_path: str | None = None,
 ) -> list[_VehiclePlan]:
     """Build and solve the VRPTW ILP; return one plan per vehicle."""
 
@@ -271,11 +274,38 @@ def _solve_vrptw(
     # -----------------------------------------------------------------------
     # Solve
     # -----------------------------------------------------------------------
-    solver = pulp.PULP_CBC_CMD(
-        timeLimit=time_limit_s,
-        gapRel=mip_gap,
-        msg=1 if msg else 0,
-    )
+    # Determine CBC executable path. Preference order:
+    # 1) explicit cbc_path argument
+    # 2) DVRPTW_CBC_PATH environment variable
+    # 3) fall back to default behavior (let PuLP find it)
+    # Resolve CBC path with preference: explicit arg -> env var -> PATH 'cbc'
+    resolved_path: str | None = None
+    if cbc_path:
+        resolved_path = cbc_path if os.path.isabs(cbc_path) else shutil.which(cbc_path)
+    if not resolved_path:
+        env_path = os.environ.get("DVRPTW_CBC_PATH")
+        if env_path:
+            resolved_path = (
+                env_path if os.path.isabs(env_path) else shutil.which(env_path)
+            )
+    if not resolved_path:
+        resolved_path = shutil.which("cbc")
+
+    if resolved_path:
+        # Use generic COIN_CMD when an explicit path is provided; PULP_CBC_CMD
+        # forbids setting a custom path in some pulp versions.
+        solver = pulp.COIN_CMD(
+            path=resolved_path,
+            timeLimit=time_limit_s,
+            gapRel=mip_gap,
+            msg=1 if msg else 0,
+        )
+    else:
+        solver = pulp.PULP_CBC_CMD(
+            timeLimit=time_limit_s,
+            gapRel=mip_gap,
+            msg=1 if msg else 0,
+        )
     prob.solve(solver)
     log.info(
         "ILP solved: status=%s objective=%.4f",
@@ -370,16 +400,22 @@ class ILPStrategy:
         time_limit_s: float = 60.0,
         mip_gap: float = 0.01,
         msg: bool = False,
+        cbc_path: str | None = None,
     ) -> None:
         self._instance = instance
         if evaluator is None:
             evaluator = StarNormEvaluator.from_instance(0.5, 0.5, instance)
+        # Resolve CBC path: prefer explicit arg, then env var, then PATH lookup
+        if cbc_path is None:
+            cbc_path = os.environ.get("DVRPTW_CBC_PATH") or shutil.which("cbc")
+
         self._plans = _solve_vrptw(
             instance,
             evaluator=evaluator,
             time_limit_s=time_limit_s,
             mip_gap=mip_gap,
             msg=msg,
+            cbc_path=cbc_path,
         )
         # Map vehicle_id -> plan for fast lookup
         self._plan_by_vehicle: dict[int, _VehiclePlan] = {

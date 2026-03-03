@@ -29,6 +29,3 @@ jobs:
 
       - name: Run pre-commit hooks (nix flake check)
         run: nix flake check
-
-      - name: Run type check (ty)
-        run: nix develop --command ty check
