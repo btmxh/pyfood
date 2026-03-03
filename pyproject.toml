@@ -12,4 +12,7 @@ dvrptw = { workspace = true }
 members = ["packages/*"]
 
 [dependency-groups]
-dev = ["pytest>=9.0.2", "ruff>=0.15.4"]
+dev = ["pytest>=9.0.2", "ruff>=0.15.4", "maturin>=1.12,<2.0"]
+
+[tool.setuptools]
+packages = []
