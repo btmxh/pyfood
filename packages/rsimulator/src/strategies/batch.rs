@@ -131,9 +131,9 @@ pub struct BatchComposableStrategy {
     pub router: Box<dyn BatchRoutingStrategy>,
     pub scheduler: Box<dyn SchedulingStrategy>,
     /// Duration of each routing slot.
-    pub slot_size: f64,
+    pub slot_size: f32,
     /// Simulation time at which the current slot ends.
-    pub next_slot_end: f64,
+    pub next_slot_end: f32,
     /// Requests that have been released but not yet passed to the router.
     pub buffer: Vec<RequestId>,
     /// Requests already seen (released) to avoid double-buffering.
@@ -245,7 +245,7 @@ impl RustStrategy for BatchComposableStrategy {
                     .iter()
                     .filter(|v| v.available_at > state.time)
                     .map(|v| v.available_at)
-                    .fold(f64::INFINITY, f64::min);
+                    .fold(f32::INFINITY, f32::min);
 
                 let next_release = state
                     .pending
@@ -253,16 +253,16 @@ impl RustStrategy for BatchComposableStrategy {
                     .filter(|rid| !state.released.contains(rid))
                     .filter_map(|rid| view.get(*rid))
                     .map(|r| r.release_time)
-                    .fold(f64::INFINITY, f64::min);
+                    .fold(f32::INFINITY, f32::min);
 
                 // Also wake at the next slot boundary if buffer is non-empty.
                 let next_slot = if has_buffered {
                     self.next_slot_end
                 } else {
-                    f64::INFINITY
+                    f32::INFINITY
                 };
 
-                let until = f64::min(next_slot, f64::min(next_vehicle_free, next_release));
+                let until = f32::min(next_slot, f32::min(next_vehicle_free, next_release));
                 if until.is_finite() && until > state.time {
                     actions.push(SimAction::Wait { until });
                 }
@@ -310,6 +310,7 @@ pub fn batch_composable_strategy(
     scheduler: Py<PyAny>,
     slot_size: f64,
 ) -> NativeStrategyWrapper {
+    let slot_size_f32 = slot_size as f32;
     NativeStrategyWrapper {
         inner: Some(Box::new(BatchComposableStrategy {
             router: Box::new(PyBatchRoutingAdapter {
@@ -320,8 +321,8 @@ pub fn batch_composable_strategy(
                 py_scheduler: scheduler,
                 py_view: None,
             }),
-            slot_size,
-            next_slot_end: slot_size,
+            slot_size: slot_size_f32,
+            next_slot_end: slot_size_f32,
             buffer: Vec::new(),
             seen: HashSet::new(),
             queues: HashMap::new(),

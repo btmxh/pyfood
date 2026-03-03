@@ -46,7 +46,7 @@ pub struct Simulator {
     vehicle_index: HashMap<i64, usize>,
 
     // Mutable simulation state
-    time: f64,
+    time: f32,
     vehicles: Vec<VehicleState>,
     pending_requests: HashSet<RequestId>,
     served_requests: HashSet<RequestId>,
@@ -189,7 +189,7 @@ impl Simulator {
             vehicle_specs,
             depot_id,
             vehicle_index,
-            time: 0.0,
+            time: 0.0_f32,
             vehicles,
             pending_requests,
             served_requests: HashSet::new(),
@@ -253,17 +253,17 @@ impl Simulator {
             .event_queue
             .peek()
             .map(|e| e.0.time)
-            .unwrap_or(f64::INFINITY);
+            .unwrap_or(f32::INFINITY);
 
         let vehicle_time = self
             .vehicles
             .iter()
             .filter(|v| v.available_at > self.time)
             .map(|v| v.available_at)
-            .fold(f64::INFINITY, f64::min);
+            .fold(f32::INFINITY, f32::min);
 
         let next_time = queue_time.min(vehicle_time);
-        if next_time == f64::INFINITY {
+        if next_time == f32::INFINITY {
             return Ok(());
         }
 
@@ -410,7 +410,7 @@ impl Simulator {
             )
         };
 
-        let service_start = f64::max(arrival_time, tw_earliest);
+        let service_start = f32::max(arrival_time, tw_earliest);
         if service_start > tw_latest {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Cannot serve request {:?} with vehicle {vehicle_id}: \
@@ -444,7 +444,7 @@ impl Simulator {
         Ok(())
     }
 
-    fn execute_wait(&mut self, until_time: f64) -> PyResult<()> {
+    fn execute_wait(&mut self, until_time: f32) -> PyResult<()> {
         if until_time <= self.time {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "WaitEvent until_time={until_time} must be > current time={}",
@@ -482,11 +482,12 @@ impl Simulator {
         for v in &self.vehicles {
             let route_ids: Vec<i64> = v.route.iter().map(|r| r.0).collect();
             routes.append(PyList::new(py, &route_ids)?)?;
-            service_times_list.append(PyList::new(py, &v.service_times)?)?;
+            let st: Vec<f64> = v.service_times.iter().map(|&t| t as f64).collect();
+            service_times_list.append(PyList::new(py, &st)?)?;
         }
 
         // Compute total travel cost
-        let mut total_cost = 0.0_f64;
+        let mut total_cost = 0.0_f32;
         let depot = self.requests.get(&self.depot_id).unwrap();
         for v in &self.vehicles {
             if v.route.is_empty() {
@@ -510,7 +511,7 @@ impl Simulator {
         solution.set_item("service_times", service_times_list)?;
 
         let metrics = PyDict::new(py);
-        metrics.set_item("total_travel_cost", total_cost)?;
+        metrics.set_item("total_travel_cost", total_cost as f64)?;
         metrics.set_item("rejected", rejected)?;
 
         let result = PyDict::new(py);

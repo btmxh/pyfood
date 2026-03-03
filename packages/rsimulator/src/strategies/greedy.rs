@@ -25,7 +25,7 @@ struct GreedyRustStrategy {
     /// Depot request, cached during [`initialize`] for position lookups.
     depot: Option<Request>,
     /// Vehicle speed (all vehicles share one speed in this model).
-    speed: f64,
+    speed: f32,
 }
 
 impl RustStrategy for GreedyRustStrategy {
@@ -88,7 +88,7 @@ impl RustStrategy for GreedyRustStrategy {
                     None => 0.0,
                 };
                 let arrival = vehicle.available_at + travel_time;
-                let service_start = f64::max(arrival, dest_req.time_window.earliest);
+                let service_start = f32::max(arrival, dest_req.time_window.earliest);
 
                 if service_start <= dest_req.time_window.latest {
                     remaining.remove(i);
@@ -119,7 +119,7 @@ pub fn greedy_strategy() -> NativeStrategyWrapper {
     NativeStrategyWrapper {
         inner: Some(Box::new(GreedyRustStrategy {
             depot: None,
-            speed: 1.0,
+            speed: 1.0_f32,
         })),
     }
 }

@@ -22,24 +22,24 @@ use crate::types::{RequestId, SimAction, SimulationSnapshot};
 
 #[derive(Debug, Clone)]
 pub struct TimeWindow {
-    pub earliest: f64,
-    pub latest: f64,
+    pub earliest: f32,
+    pub latest: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct Request {
     pub id: RequestId,
-    pub x: f64,
-    pub y: f64,
-    pub demand: f64,
+    pub x: f32,
+    pub y: f32,
+    pub demand: f32,
     pub time_window: TimeWindow,
-    pub service_time: f64,
-    pub release_time: f64,
+    pub service_time: f32,
+    pub release_time: f32,
     pub is_depot: bool,
 }
 
 impl Request {
-    pub fn distance_to(&self, other: &Request) -> f64 {
+    pub fn distance_to(&self, other: &Request) -> f32 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
         (dx * dx + dy * dy).sqrt()
@@ -49,12 +49,12 @@ impl Request {
 #[derive(Debug, Clone)]
 pub struct VehicleSpec {
     pub id: i64,
-    pub capacity: f64,
-    pub speed: f64,
+    pub capacity: f32,
+    pub speed: f32,
 }
 
 impl VehicleSpec {
-    pub fn travel_time(&self, distance: f64) -> f64 {
+    pub fn travel_time(&self, distance: f32) -> f32 {
         distance / self.speed
     }
 }
@@ -67,10 +67,10 @@ impl VehicleSpec {
 pub struct VehicleState {
     pub vehicle_id: i64,
     pub position: RequestId,
-    pub current_load: f64,
-    pub available_at: f64,
+    pub current_load: f32,
+    pub available_at: f32,
     pub route: Vec<RequestId>,
-    pub service_times: Vec<f64>,
+    pub service_times: Vec<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ pub enum EventKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
-    pub time: f64,
+    pub time: f32,
     pub kind: EventKind,
     pub id: i64, // request id for Arrival, -1 for Wake
 }
@@ -194,5 +194,5 @@ pub trait RustStrategy: Send + Sync {
 /// Called once per action (strategy-originated or auto-reject) with the
 /// current simulation time, the action, and whether it was automatic.
 pub trait RustCallback: Send + Sync {
-    fn on_action(&self, time: f64, action: &SimAction, auto: bool);
+    fn on_action(&self, time: f32, action: &SimAction, auto: bool);
 }

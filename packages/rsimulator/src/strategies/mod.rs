@@ -22,9 +22,9 @@ pub mod greedy;
 pub use batch::batch_composable_strategy;
 pub use composable::{ComposableStrategy, composable_strategy};
 pub use gp_tree::{
-    GpTree, gp_add, gp_const, gp_current_load, gp_demand, gp_div, gp_mul, gp_release_time,
-    gp_remaining_capacity, gp_sub, gp_time_until_due, gp_travel_time, gp_window_earliest,
-    gp_window_latest,
+    FlatGpTree, flat_gp_add, flat_gp_const, flat_gp_current_load, flat_gp_demand, flat_gp_div,
+    flat_gp_mul, flat_gp_release_time, flat_gp_remaining_capacity, flat_gp_sub,
+    flat_gp_time_until_due, flat_gp_travel_time, flat_gp_window_earliest, flat_gp_window_latest,
 };
 pub use greedy::greedy_strategy;
 
@@ -51,7 +51,7 @@ pub trait RoutingStrategy: Send + Sync {
     ///
     /// Override to update any time-dependent state (e.g. `TimeUntilDue` scoring).
     /// The default implementation is a no-op.
-    fn begin_tick(&mut self, _time: f64) {}
+    fn begin_tick(&mut self, _time: f32) {}
 
     /// Return `Some(vehicle_id)` to assign `request` to that vehicle's queue,
     /// or `None` to reject it immediately.
@@ -75,7 +75,7 @@ pub trait SchedulingStrategy: Send + Sync {
     ///
     /// Override to update any time-dependent state (e.g. `TimeUntilDue` scoring).
     /// The default implementation is a no-op.
-    fn begin_tick(&mut self, _time: f64) {}
+    fn begin_tick(&mut self, _time: f32) {}
 
     /// Return a `RequestId` from `queue` to dispatch next.
     ///
@@ -130,8 +130,8 @@ pub(super) fn build_py_instance_view(py: Python, view: &InstanceView<'_>) -> PyR
     for vs in view.vehicle_specs() {
         let sd = PyDict::new(py);
         sd.set_item("id", vs.id)?;
-        sd.set_item("capacity", vs.capacity)?;
-        sd.set_item("speed", vs.speed)?;
+        sd.set_item("capacity", vs.capacity as f64)?;
+        sd.set_item("speed", vs.speed as f64)?;
         specs.append(sd)?;
     }
     d.set_item("vehicle_specs", specs)?;
@@ -152,10 +152,11 @@ pub(super) fn build_py_vehicle(py: Python, v: &VehicleSnapshot) -> PyResult<Py<P
     let d = PyDict::new(py);
     d.set_item("vehicle_id", v.vehicle_id)?;
     d.set_item("position", v.position.0)?;
-    d.set_item("current_load", v.current_load)?;
-    d.set_item("available_at", v.available_at)?;
+    d.set_item("current_load", v.current_load as f64)?;
+    d.set_item("available_at", v.available_at as f64)?;
     let route_ids: Vec<i64> = v.route.iter().map(|r| r.0).collect();
     d.set_item("route", PyList::new(py, &route_ids)?)?;
-    d.set_item("service_times", PyList::new(py, &v.service_times)?)?;
+    let st: Vec<f64> = v.service_times.iter().map(|&t| t as f64).collect();
+    d.set_item("service_times", PyList::new(py, &st)?)?;
     Ok(d.into())
 }

@@ -54,26 +54,42 @@ fn rsimulator(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(composable_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(batch_composable_strategy, m)?)?;
     // GP strategy
-    m.add_class::<strategies::gp_tree::GpTree>()?;
+    m.add_class::<strategies::gp_tree::FlatGpTree>()?;
     m.add_function(wrap_pyfunction!(strategies::gp_strategy::gp_strategy, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_const, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_add, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_sub, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_mul, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_div, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_travel_time, m)?)?;
+    // FlatGpTree factories
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_const, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_add, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_sub, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_mul, m)?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_div, m)?)?;
     m.add_function(wrap_pyfunction!(
-        strategies::gp_tree::gp_window_earliest,
+        strategies::gp_tree::flat_gp_travel_time,
         m
     )?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_window_latest, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_time_until_due, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_demand, m)?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_current_load, m)?)?;
     m.add_function(wrap_pyfunction!(
-        strategies::gp_tree::gp_remaining_capacity,
+        strategies::gp_tree::flat_gp_window_earliest,
         m
     )?)?;
-    m.add_function(wrap_pyfunction!(strategies::gp_tree::gp_release_time, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_tree::flat_gp_window_latest,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_tree::flat_gp_time_until_due,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_demand, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_tree::flat_gp_current_load,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_tree::flat_gp_remaining_capacity,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_tree::flat_gp_release_time,
+        m
+    )?)?;
     Ok(())
 }

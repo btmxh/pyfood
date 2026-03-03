@@ -10,7 +10,7 @@ use crate::instance::{InstanceView, Request};
 use crate::strategies::{ComposableStrategy, RoutingStrategy, SchedulingStrategy};
 use crate::types::{NativeStrategyWrapper, RequestId, VehicleSnapshot};
 
-use super::gp_tree::{EvalContext, GpTree, Tree};
+use super::gp_tree::{EvalContext, FlatGpTree, FlatTree};
 
 // ---------------------------------------------------------------------------
 // Shared helper
@@ -20,9 +20,9 @@ fn make_ctx<'a>(
     request: &'a Request,
     vehicle: &'a VehicleSnapshot,
     requests: &HashMap<RequestId, Request>,
-    current_time: f64,
-    speed: f64,
-    vehicle_capacity: f64,
+    current_time: f32,
+    speed: f32,
+    vehicle_capacity: f32,
 ) -> EvalContext<'a> {
     let (vx, vy) = requests
         .get(&vehicle.position)
@@ -44,12 +44,12 @@ fn make_ctx<'a>(
 // ---------------------------------------------------------------------------
 
 pub struct GpRoutingStrategy {
-    routing_tree: Tree,
-    reject_tree: Tree,
+    routing_tree: FlatTree,
+    reject_tree: FlatTree,
     requests: HashMap<RequestId, Request>,
-    speed: f64,
-    capacity: f64,
-    current_time: f64,
+    speed: f32,
+    capacity: f32,
+    current_time: f32,
 }
 
 impl RoutingStrategy for GpRoutingStrategy {
@@ -63,7 +63,7 @@ impl RoutingStrategy for GpRoutingStrategy {
         }
     }
 
-    fn begin_tick(&mut self, time: f64) {
+    fn begin_tick(&mut self, time: f32) {
         self.current_time = time;
     }
 
@@ -89,8 +89,8 @@ impl RoutingStrategy for GpRoutingStrategy {
         let request = self.requests.get(&rid)?;
 
         let mut best_vehicle_id: Option<i64> = None;
-        let mut best_routing_score = f64::NEG_INFINITY;
-        let mut best_reject_score = f64::NEG_INFINITY;
+        let mut best_routing_score = f32::NEG_INFINITY;
+        let mut best_reject_score = f32::NEG_INFINITY;
 
         for vehicle in vehicles {
             let ctx = make_ctx(
@@ -101,8 +101,8 @@ impl RoutingStrategy for GpRoutingStrategy {
                 self.speed,
                 self.capacity,
             );
-            let routing_score = self.routing_tree.eval(&ctx);
-            let reject_score = self.reject_tree.eval(&ctx);
+            let routing_score = self.routing_tree.eval_scalar(&ctx);
+            let reject_score = self.reject_tree.eval_scalar(&ctx);
 
             if routing_score > best_routing_score {
                 best_routing_score = routing_score;
@@ -129,11 +129,11 @@ impl RoutingStrategy for GpRoutingStrategy {
 // ---------------------------------------------------------------------------
 
 pub struct GpSchedulingStrategy {
-    sequencing_tree: Tree,
+    sequencing_tree: FlatTree,
     requests: HashMap<RequestId, Request>,
-    speed: f64,
-    capacity: f64,
-    current_time: f64,
+    speed: f32,
+    capacity: f32,
+    current_time: f32,
 }
 
 impl SchedulingStrategy for GpSchedulingStrategy {
@@ -147,7 +147,7 @@ impl SchedulingStrategy for GpSchedulingStrategy {
         }
     }
 
-    fn begin_tick(&mut self, time: f64) {
+    fn begin_tick(&mut self, time: f32) {
         self.current_time = time;
     }
 
@@ -183,7 +183,7 @@ impl SchedulingStrategy for GpSchedulingStrategy {
                     self.speed,
                     self.capacity,
                 );
-                Some((rid, self.sequencing_tree.eval(&ctx)))
+                Some((rid, self.sequencing_tree.eval_scalar(&ctx)))
             })
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(rid, _)| rid)
@@ -202,9 +202,9 @@ impl SchedulingStrategy for GpSchedulingStrategy {
 /// - `reject_tree`     — if its score exceeds the routing score, request is rejected.
 #[pyfunction]
 pub fn gp_strategy(
-    routing_tree: GpTree,
-    sequencing_tree: GpTree,
-    reject_tree: GpTree,
+    routing_tree: FlatGpTree,
+    sequencing_tree: FlatGpTree,
+    reject_tree: FlatGpTree,
 ) -> NativeStrategyWrapper {
     use std::collections::HashSet;
 
@@ -214,16 +214,16 @@ pub fn gp_strategy(
                 routing_tree: routing_tree.inner,
                 reject_tree: reject_tree.inner,
                 requests: HashMap::new(),
-                speed: 1.0,
-                capacity: f64::INFINITY,
-                current_time: 0.0,
+                speed: 1.0_f32,
+                capacity: f32::INFINITY,
+                current_time: 0.0_f32,
             }),
             scheduler: Box::new(GpSchedulingStrategy {
                 sequencing_tree: sequencing_tree.inner,
                 requests: HashMap::new(),
-                speed: 1.0,
-                capacity: f64::INFINITY,
-                current_time: 0.0,
+                speed: 1.0_f32,
+                capacity: f32::INFINITY,
+                current_time: 0.0_f32,
             }),
             queues: HashMap::new(),
             routed: HashSet::new(),

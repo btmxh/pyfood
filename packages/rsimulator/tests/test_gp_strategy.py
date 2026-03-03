@@ -1,4 +1,4 @@
-"""Tests for GP strategy via rsimulator: GpTree, factory functions, and gp_strategy().
+"""Tests for GP strategy via rsimulator: FlatGpTree, factory functions, and gp_strategy().
 
 Covers:
 - gp_strategy() returns NativeStrategyWrapper
@@ -176,11 +176,11 @@ class TestGpStrategyReturnType(unittest.TestCase):
     """gp_strategy() must return a NativeStrategyWrapper."""
 
     def test_returns_native_wrapper(self):
-        from rsimulator import gp_const, gp_strategy, NativeStrategyWrapper
+        from rsimulator import flat_gp_const, gp_strategy, NativeStrategyWrapper
 
-        routing = gp_const(1.0)
-        sequencing = gp_const(1.0)
-        reject = gp_const(0.0)
+        routing = flat_gp_const(1.0)
+        sequencing = flat_gp_const(1.0)
+        reject = flat_gp_const(0.0)
         s = gp_strategy(routing, sequencing, reject)
         self.assertIsInstance(s, NativeStrategyWrapper)
 
@@ -189,10 +189,12 @@ class TestGpStrategyAcceptAll(unittest.TestCase):
     """Routing score always > reject score → every request is served."""
 
     def test_single_request_served(self):
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
         # routing=1.0, reject=0.0 → routing > reject → accept
-        strategy = gp_strategy(gp_const(1.0), gp_const(0.0), gp_const(0.0))
+        strategy = gp_strategy(
+            flat_gp_const(1.0), flat_gp_const(0.0), flat_gp_const(0.0)
+        )
         inst = _make_single_request_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -201,9 +203,11 @@ class TestGpStrategyAcceptAll(unittest.TestCase):
         self.assertEqual(result.metrics.rejected, 0)
 
     def test_all_requests_served(self):
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
-        strategy = gp_strategy(gp_const(1.0), gp_const(0.0), gp_const(0.0))
+        strategy = gp_strategy(
+            flat_gp_const(1.0), flat_gp_const(0.0), flat_gp_const(0.0)
+        )
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -213,9 +217,11 @@ class TestGpStrategyAcceptAll(unittest.TestCase):
 
     def test_travel_cost_correct(self):
         """Single request at (3,4): round-trip distance = 10.0."""
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
-        strategy = gp_strategy(gp_const(1.0), gp_const(0.0), gp_const(0.0))
+        strategy = gp_strategy(
+            flat_gp_const(1.0), flat_gp_const(0.0), flat_gp_const(0.0)
+        )
         inst = _make_single_request_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -223,9 +229,11 @@ class TestGpStrategyAcceptAll(unittest.TestCase):
 
     def test_solution_structure(self):
         """routes and service_times have matching lengths."""
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
-        strategy = gp_strategy(gp_const(1.0), gp_const(0.0), gp_const(0.0))
+        strategy = gp_strategy(
+            flat_gp_const(1.0), flat_gp_const(0.0), flat_gp_const(0.0)
+        )
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -240,10 +248,12 @@ class TestGpStrategyRejectAll(unittest.TestCase):
     """Reject score always > routing score → every request is rejected."""
 
     def test_reject_all(self):
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
         # routing=0.0, reject=1.0 → reject > routing → reject
-        strategy = gp_strategy(gp_const(0.0), gp_const(0.0), gp_const(1.0))
+        strategy = gp_strategy(
+            flat_gp_const(0.0), flat_gp_const(0.0), flat_gp_const(1.0)
+        )
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -256,18 +266,23 @@ class TestGpStrategySequencing(unittest.TestCase):
     """Sequencing tree controls which queued request is dispatched first."""
 
     def test_most_urgent_served_first(self):
-        """gp_time_until_due() as sequencing tree → serve req with smaller deadline first.
+        """flat_gp_time_until_due() as sequencing tree → serve req with smaller deadline first.
 
         req1 has deadline 50, req2 has deadline 200.
         At dispatch time ≈0, TimeUntilDue for req1 ≈ 50, for req2 ≈ 200.
         max_by(TimeUntilDue) picks req2 first — less urgent.
-        To serve most urgent first we use negative: gp_sub(gp_const(0), gp_time_until_due()).
+        To serve most urgent first we use negative: flat_gp_sub(flat_gp_const(0), flat_gp_time_until_due()).
         """
-        from rsimulator import gp_const, gp_strategy, gp_sub, gp_time_until_due
+        from rsimulator import (
+            flat_gp_const,
+            gp_strategy,
+            flat_gp_sub,
+            flat_gp_time_until_due,
+        )
 
         # Negative TimeUntilDue: smaller deadline → higher score → dispatched first
-        sequencing = gp_sub(gp_const(0.0), gp_time_until_due())
-        strategy = gp_strategy(gp_const(1.0), sequencing, gp_const(0.0))
+        sequencing = flat_gp_sub(flat_gp_const(0.0), flat_gp_time_until_due())
+        strategy = gp_strategy(flat_gp_const(1.0), sequencing, flat_gp_const(0.0))
         inst = _make_urgency_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -278,11 +293,11 @@ class TestGpStrategySequencing(unittest.TestCase):
         self.assertEqual(result.solution.routes[0][0], 1)
 
     def test_least_urgent_served_first(self):
-        """gp_time_until_due() without negation → serve req with larger deadline first."""
-        from rsimulator import gp_strategy, gp_const, gp_time_until_due
+        """flat_gp_time_until_due() without negation → serve req with larger deadline first."""
+        from rsimulator import gp_strategy, flat_gp_const, flat_gp_time_until_due
 
-        sequencing = gp_time_until_due()
-        strategy = gp_strategy(gp_const(1.0), sequencing, gp_const(0.0))
+        sequencing = flat_gp_time_until_due()
+        strategy = gp_strategy(flat_gp_const(1.0), sequencing, flat_gp_const(0.0))
         inst = _make_urgency_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -292,142 +307,161 @@ class TestGpStrategySequencing(unittest.TestCase):
         self.assertEqual(result.solution.routes[0][0], 2)
 
 
-class TestGpTreeFactories(unittest.TestCase):
-    """All factory functions return GpTree and can be passed to gp_strategy()."""
+class TestFlatGpTreeFactories(unittest.TestCase):
+    """All factory functions return FlatGpTree and can be passed to gp_strategy()."""
 
     def _run_with_sequencing(self, sequencing_tree):
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
-        strategy = gp_strategy(gp_const(1.0), sequencing_tree, gp_const(0.0))
+        strategy = gp_strategy(flat_gp_const(1.0), sequencing_tree, flat_gp_const(0.0))
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
         return result
 
-    def test_gp_const(self):
-        from rsimulator import gp_const
+    def test_flat_gp_const(self):
+        from rsimulator import flat_gp_const
 
-        result = self._run_with_sequencing(gp_const(0.0))
+        result = self._run_with_sequencing(flat_gp_const(0.0))
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_add(self):
-        from rsimulator import gp_add, gp_const
+    def test_flat_gp_add(self):
+        from rsimulator import flat_gp_add, flat_gp_const
 
-        result = self._run_with_sequencing(gp_add(gp_const(1.0), gp_const(2.0)))
+        result = self._run_with_sequencing(
+            flat_gp_add(flat_gp_const(1.0), flat_gp_const(2.0))
+        )
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_sub(self):
-        from rsimulator import gp_const, gp_sub
+    def test_flat_gp_sub(self):
+        from rsimulator import flat_gp_const, flat_gp_sub
 
-        result = self._run_with_sequencing(gp_sub(gp_const(5.0), gp_const(3.0)))
+        result = self._run_with_sequencing(
+            flat_gp_sub(flat_gp_const(5.0), flat_gp_const(3.0))
+        )
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_mul(self):
-        from rsimulator import gp_const, gp_mul
+    def test_flat_gp_mul(self):
+        from rsimulator import flat_gp_const, flat_gp_mul
 
-        result = self._run_with_sequencing(gp_mul(gp_const(2.0), gp_const(3.0)))
+        result = self._run_with_sequencing(
+            flat_gp_mul(flat_gp_const(2.0), flat_gp_const(3.0))
+        )
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_div(self):
-        from rsimulator import gp_const, gp_div
+    def test_flat_gp_div(self):
+        from rsimulator import flat_gp_const, flat_gp_div
 
         # Protected division: divisor 0 → result 1.0
-        result = self._run_with_sequencing(gp_div(gp_const(6.0), gp_const(0.0)))
+        result = self._run_with_sequencing(
+            flat_gp_div(flat_gp_const(6.0), flat_gp_const(0.0))
+        )
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_travel_time(self):
-        from rsimulator import gp_travel_time
+    def test_flat_gp_travel_time(self):
+        from rsimulator import flat_gp_travel_time
 
-        result = self._run_with_sequencing(gp_travel_time())
+        result = self._run_with_sequencing(flat_gp_travel_time())
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_window_earliest(self):
-        from rsimulator import gp_window_earliest
+    def test_flat_gp_window_earliest(self):
+        from rsimulator import flat_gp_window_earliest
 
-        result = self._run_with_sequencing(gp_window_earliest())
+        result = self._run_with_sequencing(flat_gp_window_earliest())
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_window_latest(self):
-        from rsimulator import gp_window_latest
+    def test_flat_gp_window_latest(self):
+        from rsimulator import flat_gp_window_latest
 
-        result = self._run_with_sequencing(gp_window_latest())
+        result = self._run_with_sequencing(flat_gp_window_latest())
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_time_until_due(self):
-        from rsimulator import gp_time_until_due
+    def test_flat_gp_time_until_due(self):
+        from rsimulator import flat_gp_time_until_due
 
-        result = self._run_with_sequencing(gp_time_until_due())
+        result = self._run_with_sequencing(flat_gp_time_until_due())
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_demand(self):
-        from rsimulator import gp_demand
+    def test_flat_gp_demand(self):
+        from rsimulator import flat_gp_demand
 
-        result = self._run_with_sequencing(gp_demand())
+        result = self._run_with_sequencing(flat_gp_demand())
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_current_load(self):
-        from rsimulator import gp_current_load
+    def test_flat_gp_current_load(self):
+        from rsimulator import flat_gp_current_load
 
-        result = self._run_with_sequencing(gp_current_load())
+        result = self._run_with_sequencing(flat_gp_current_load())
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_remaining_capacity(self):
-        from rsimulator import gp_remaining_capacity
+    def test_flat_gp_remaining_capacity(self):
+        from rsimulator import flat_gp_remaining_capacity
 
-        result = self._run_with_sequencing(gp_remaining_capacity())
+        result = self._run_with_sequencing(flat_gp_remaining_capacity())
         self.assertEqual(result.metrics.rejected, 0)
 
-    def test_gp_release_time(self):
-        from rsimulator import gp_release_time
+    def test_flat_gp_release_time(self):
+        from rsimulator import flat_gp_release_time
 
-        result = self._run_with_sequencing(gp_release_time())
+        result = self._run_with_sequencing(flat_gp_release_time())
         self.assertEqual(result.metrics.rejected, 0)
 
 
-class TestGpTreeArithmetic(unittest.TestCase):
+class TestFlatGpTreeArithmetic(unittest.TestCase):
     """Const trees with known values produce predictable routing/rejection."""
 
     def test_equal_routing_reject_accepts(self):
         """When routing == reject, request is accepted (reject > routing is false)."""
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
-        strategy = gp_strategy(gp_const(5.0), gp_const(0.0), gp_const(5.0))
+        strategy = gp_strategy(
+            flat_gp_const(5.0), flat_gp_const(0.0), flat_gp_const(5.0)
+        )
         inst = _make_single_request_instance()
         result = RustSimulator(inst, strategy).run()
         # reject (5.0) is NOT > routing (5.0), so accepted
         self.assertEqual(result.metrics.rejected, 0)
 
     def test_protected_div_zero_is_one(self):
-        """gp_div with zero denominator returns 1.0 (protected division)."""
-        from rsimulator import gp_const, gp_div, gp_strategy
+        """flat_gp_div with zero denominator returns 1.0 (protected division)."""
+        from rsimulator import flat_gp_const, flat_gp_div, gp_strategy
 
         # routing = 1/0 = 1.0 (protected), reject = 0.0 → accepted
-        routing = gp_div(gp_const(1.0), gp_const(0.0))
-        strategy = gp_strategy(routing, gp_const(0.0), gp_const(0.0))
+        routing = flat_gp_div(flat_gp_const(1.0), flat_gp_const(0.0))
+        strategy = gp_strategy(routing, flat_gp_const(0.0), flat_gp_const(0.0))
         inst = _make_single_request_instance()
         result = RustSimulator(inst, strategy).run()
         self.assertEqual(result.metrics.rejected, 0)
 
     def test_negative_routing_still_accepted_if_reject_lower(self):
         """Negative routing score with even-lower reject score → accepted."""
-        from rsimulator import gp_const, gp_strategy
+        from rsimulator import flat_gp_const, gp_strategy
 
         # routing = -1.0, reject = -2.0 → reject < routing → accept
-        strategy = gp_strategy(gp_const(-1.0), gp_const(0.0), gp_const(-2.0))
+        strategy = gp_strategy(
+            flat_gp_const(-1.0), flat_gp_const(0.0), flat_gp_const(-2.0)
+        )
         inst = _make_single_request_instance()
         result = RustSimulator(inst, strategy).run()
         self.assertEqual(result.metrics.rejected, 0)
 
 
-class TestGpTravelTimeRouting(unittest.TestCase):
-    """Use gp_travel_time() as routing tree (prefer lower travel time)."""
+class TestFlatGpTravelTimeRouting(unittest.TestCase):
+    """Use flat_gp_travel_time() as routing tree (prefer lower travel time)."""
 
     def test_serves_all_requests(self):
         """Routing by negative travel time still serves all requests."""
-        from rsimulator import gp_const, gp_strategy, gp_sub, gp_travel_time
+        from rsimulator import (
+            flat_gp_const,
+            gp_strategy,
+            flat_gp_sub,
+            flat_gp_travel_time,
+        )
 
         # Prefer vehicle with less travel time → negate travel_time
-        routing = gp_sub(gp_const(0.0), gp_travel_time())
-        strategy = gp_strategy(routing, gp_const(0.0), gp_const(float("-inf")))
+        routing = flat_gp_sub(flat_gp_const(0.0), flat_gp_travel_time())
+        strategy = gp_strategy(
+            routing, flat_gp_const(0.0), flat_gp_const(float("-inf"))
+        )
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
@@ -437,10 +471,17 @@ class TestGpTravelTimeRouting(unittest.TestCase):
 
     def test_travel_cost_plausible(self):
         """Total travel cost is positive and finite."""
-        from rsimulator import gp_const, gp_strategy, gp_sub, gp_travel_time
+        from rsimulator import (
+            flat_gp_const,
+            gp_strategy,
+            flat_gp_sub,
+            flat_gp_travel_time,
+        )
 
-        routing = gp_sub(gp_const(0.0), gp_travel_time())
-        strategy = gp_strategy(routing, gp_const(0.0), gp_const(float("-inf")))
+        routing = flat_gp_sub(flat_gp_const(0.0), flat_gp_travel_time())
+        strategy = gp_strategy(
+            routing, flat_gp_const(0.0), flat_gp_const(float("-inf"))
+        )
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
