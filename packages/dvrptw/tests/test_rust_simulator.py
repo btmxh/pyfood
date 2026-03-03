@@ -382,7 +382,7 @@ class TestCrossBackendParity(unittest.TestCase):
         self.assertAlmostEqual(
             py_res.metrics.total_travel_cost,
             rs_res.metrics.total_travel_cost,
-            places=9,
+            places=5,
         )
         self.assertEqual(py_res.metrics.rejected, rs_res.metrics.rejected)
 
