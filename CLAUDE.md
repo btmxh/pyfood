@@ -17,14 +17,30 @@ See `docs/STATEMENT.md` for the complete problem formulation.
 
 This is a monorepo using uv workspace with two main packages:
 
-- **`packages/dvrptw/`**: Pure Python package — DVRPTW domain library (instance models, solution representation, simulation engine)
-  - Contains `DVRPTWInstance`, `Solution`, `PythonSimulator`, `RustSimulator`, and related types
+- **`packages/dvrptw/`**: Pure Python package — DVRPTW domain library
   - Uses PEP 517/518 src layout: importable as `dvrptw`
-  - Source split across: `instance.py`, `solution.py`, `events.py`, `state.py`, `python_simulator.py`, `rust_simulator.py`
+  - Main modules:
+    - `instance.py`: `DVRPTWInstance`, `Request`, `Vehicle`, `TimeWindow`, `load_vrpr_csv()`
+    - `solution.py`: `Solution` dataclass
+    - `evaluator.py`: `Evaluator` protocol and implementations (`WeightedSumEvaluator`, `StarNormEvaluator`, `LinearNormEvaluator`)
+    - `simulator/` subpackage:
+      - `base.py`: Abstract `Simulator` class
+      - `state.py`: `SimulationState`, `VehicleState`, `DispatchingStrategy` protocol, `SimulationResult`, `SimulationMetrics`
+      - `events.py`: `DispatchEvent`, `WaitEvent`, `RejectEvent`, `SchedulerAction`
+      - `python.py`: `PythonSimulator` (pure Python backend)
+      - `rust.py`: `RustSimulator` (Rust-backed backend via rsimulator)
+    - `strategies/` subpackage:
+      - `ilp.py`: `ILPStrategy` dispatching strategy
 
 - **`packages/rsimulator/`**: Rust performance module using PyO3/maturin
   - Python bindings to Rust code for performance-critical simulation
-  - Used internally by `dvrptw.RustSimulator`
+  - Implements:
+    - `RustSimulator` backend (same interface as Python simulator)
+    - Native strategies: `greedy_strategy()`, `composable_strategy()`, `batch_composable_strategy()`
+    - GP (Genetic Programming) API: `gp_strategy()` and expression tree builders (`flat_gp_*` functions)
+  - Source files:
+    - `src/strategies/gp_tree.rs`: GP tree evaluation engine
+    - `src/strategies/gp_strategy.rs`: GP strategy implementation
 
 The root `pyproject.toml` defines the workspace and main project dependencies.
 
@@ -32,31 +48,45 @@ The root `pyproject.toml` defines the workspace and main project dependencies.
 
 ### Setup
 ```bash
-# Nix-based environment (preferred)
+# Enter Nix environment
 direnv allow  # or nix develop
 
-# Alternative: use uv directly
-uv sync
+# Create virtual environment (one-time)
+python -m venv .venv
+
+# Activate venv
+source .venv/bin/activate
+
+# Install Python packages and dev dependencies in venv
+pip install -e .
+pip install -e packages/dvrptw
+pip install -e packages/rsimulator
 ```
 
 ### Testing
 ```bash
+# Activate venv first
+source .venv/bin/activate
+
 # Run all tests
-uv run pytest
+pytest
 
 # Run tests for specific package
-uv run pytest packages/dvrptw/tests/
-uv run pytest packages/rsimulator/
+pytest packages/dvrptw/tests/
+pytest packages/rsimulator/
 
 # Run single test file
-uv run pytest packages/dvrptw/tests/test_simulator_instance.py
+pytest packages/dvrptw/tests/test_simulator_instance.py
 
 # Run specific test
-uv run pytest packages/dvrptw/tests/test_simulator_instance.py::TestSimulatorInstance::test_load_vrpr_csv_basic
+pytest packages/dvrptw/tests/test_simulator_instance.py::TestSimulatorInstance::test_load_vrpr_csv_basic
 ```
 
 ### Building Rust Extension
 ```bash
+# Activate venv first
+source .venv/bin/activate
+
 # Build rsimulator (maturin-based)
 cd packages/rsimulator
 maturin develop  # or maturin build
@@ -66,6 +96,9 @@ maturin develop  # or maturin build
 
 ### Linting and Formatting
 ```bash
+# Activate venv first
+source .venv/bin/activate
+
 # Format Python code
 ruff format
 
@@ -110,16 +143,45 @@ class Solution:
 
 ### Instance Model (`dvrptw.DVRPTWInstance`)
 
-Contains:
-- Depot and customer requests (positions, demands, time windows, service times)
-- Vehicle fleet (capacity, speed)
-- Dynamic release times for requests
-- Objective weight parameter
+Core dataclass representing a DVRPTW problem instance:
+- `requests: list[Request]`: List of all nodes (depot + customers), where depot has `is_depot=True`
+- `vehicles: list[Vehicle]`: Fleet specifications with capacity and speed
+- `depot_ids: list[ID]`: IDs of depot nodes (typically just `[0]`)
+- `planning_horizon: Time | None`: Optional time limit
 
-Key methods:
-- `load_vrpr_csv()`: Load instances from CSV format
-- `to_json()`/`from_json()`: Serialization
-- `pairwise_distance()`: Precomputed distance matrix
+Each `Request` contains:
+- `id`, `position: Coord`, `demand`, `time_window: TimeWindow`, `service_time`, `release_time`, `is_depot`
+
+Each `Vehicle` contains:
+- `id`, `capacity`, `start_depot`, `end_depot`, `max_time`, `speed`
+
+Loading and serialization:
+- `load_vrpr_csv(csv_path, truck_speed, truck_capacity, num_trucks)`: Load instances from CSV format
+- `to_json()` / `from_json()`: JSON serialization
+- `pairwise_distance_matrix()`: Compute all pairwise Euclidean distances
+- `get_request(req_id)`: Lookup request by ID
+- `validate()`: Validate instance constraints
+
+### Objective Evaluators (`dvrptw.evaluator`)
+
+Evaluators collapse the two raw DVRPTW objectives (minimize travel cost, minimize rejections) into a single scalar for optimization:
+
+**Protocol:**
+```python
+class Evaluator(Protocol):
+    def scalar(obj1: float, obj2: float) -> float:
+        """obj1 = total travel cost, obj2 = rejected request count"""
+        ...
+
+    def ilp_coefficients(star_cost: float, n_customers: float) -> tuple[float, float]:
+        """Return (coeff1, coeff2) for ILP objective coefficients"""
+        ...
+```
+
+**Implementations:**
+- `WeightedSumEvaluator(w1, w2)`: Simple weighted sum (raw units, no normalization)
+- `StarNormEvaluator(w1, w2)`: Normalizes obj1 by star cost (Σ 2·dist(depot, customer)), obj2 by n_customers
+- `LinearNormEvaluator(w1, w2, lo1, hi1, lo2, hi2)`: Caller-supplied explicit bounds for linear normalization
 
 ### Simulation Engine (`dvrptw.Simulator`)
 
@@ -146,6 +208,61 @@ result = simulator.run()  # Returns SimulationResult
 **Backends:**
 - `PythonSimulator` — pure Python, always available
 - `RustSimulator` — delegates to `rsimulator` extension; requires `maturin develop`
+  - Also supports native Rust strategies via `NativeStrategyWrapper` (from rsimulator module)
+  - Example: `rsimulator.greedy_strategy()` returns a native strategy that runs entirely in Rust
+
+### Dispatching Strategies
+
+Strategies implement the `DispatchingStrategy` protocol:
+```python
+class DispatchingStrategy(Protocol):
+    def next_events(self, state: SimulationState) -> list[SchedulerAction]:
+        """Called when the simulator needs the next batch of actions."""
+```
+
+**Built-in strategies:**
+- `ILPStrategy(instance, evaluator=None)`: Solves full VRPTW as a Mixed-Integer Linear Program using PuLP, then replays the solution during simulation
+  - Formulation includes vehicle flow, capacity, time window, and service constraints
+  - Supports objective weights through pluggable evaluators
+  - Respects dynamic release times: dispatches according to precomputed plan when possible, auto-rejects infeasible requests
+
+**Native Rust strategies:**
+- Available from `rsimulator` module (e.g., `greedy_strategy()`)
+- Run entirely in Rust with no GIL contention
+- Wrapped by RustSimulator automatically
+
+### Genetic Programming (GP) Strategies (`rsimulator.gp_*`)
+
+GP strategies allow building custom routing/sequencing/rejection logic from expression trees:
+
+**Core API:**
+```python
+from dvrptw import rsimulator
+
+# Build expression trees from features and operators
+travel_time_tree = rsimulator.flat_gp_travel_time()
+capacity_tree = rsimulator.flat_gp_remaining_capacity()
+score_tree = rsimulator.flat_gp_sub(travel_time_tree, capacity_tree)
+
+# Create a strategy that uses three trees:
+# - routing: scores vehicles (returns selected vehicle ID)
+# - sequencing: scores pending requests (for dispatch order)
+# - reject: scores for auto-rejection (reject if <= 0)
+strategy = rsimulator.gp_strategy(routing_tree, sequencing_tree, reject_tree)
+simulator = RustSimulator(instance, strategy)
+result = simulator.run()
+```
+
+**Tree Construction:**
+- Leaf nodes (features): `flat_gp_travel_time()`, `flat_gp_demand()`, `flat_gp_current_load()`, `flat_gp_remaining_capacity()`, `flat_gp_window_earliest()`, `flat_gp_window_latest()`, `flat_gp_time_until_due()`, `flat_gp_release_time()`
+- Numeric literals: `flat_gp_const(value: float)`
+- Binary operators: `flat_gp_add()`, `flat_gp_sub()`, `flat_gp_mul()`, `flat_gp_div()`
+
+**How it works:**
+1. **Routing tree**: Evaluates for each vehicle in the fleet; vehicle with highest score is selected to receive the next dispatch
+2. **Sequencing tree**: Evaluates for each released but unscheduled request; requests are dispatched in order of descending score
+3. **Reject tree**: Evaluates the selected request-vehicle pair; if reject_score > routing_score, the request is auto-rejected
+4. All evaluation is JIT-compiled to SIMD f32 bytecode in Rust
 
 ### Workspace Dependencies
 
