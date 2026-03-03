@@ -53,6 +53,7 @@ impl RoutingStrategy for PyRoutingAdapter {
         request: RequestId,
         vehicles: &[VehicleSnapshot],
         _view: &InstanceView<'_>,
+        _time: f32,
     ) -> Option<i64> {
         Python::attach(|py| {
             let py_vehicles =
@@ -113,6 +114,7 @@ impl SchedulingStrategy for PySchedulingAdapter {
         vehicle: &VehicleSnapshot,
         queue: &[RequestId],
         _view: &InstanceView<'_>,
+        _time: f32,
     ) -> RequestId {
         Python::attach(|py| {
             let py_vehicle = build_py_vehicle(py, vehicle).expect("failed to build vehicle dict");
@@ -182,10 +184,6 @@ impl RustStrategy for ComposableStrategy {
     ) -> Vec<SimAction> {
         let mut actions: Vec<SimAction> = Vec::new();
 
-        // Notify sub-strategies of the current tick time.
-        self.router.begin_tick(state.time);
-        self.scheduler.begin_tick(state.time);
-
         // Phase 1: route newly-released requests (exactly once per request).
         let mut new_requests: Vec<RequestId> = state
             .released
@@ -201,7 +199,7 @@ impl RustStrategy for ComposableStrategy {
 
         for rid in new_requests {
             self.routed.insert(rid);
-            match self.router.route(rid, &state.vehicles, view) {
+            match self.router.route(rid, &state.vehicles, view, state.time) {
                 Some(vehicle_id) => {
                     self.queues.entry(vehicle_id).or_default().push_back(rid);
                 }
@@ -229,7 +227,9 @@ impl RustStrategy for ComposableStrategy {
             };
 
             let queue_slice: Vec<RequestId> = queue.iter().copied().collect();
-            let chosen = self.scheduler.schedule(vehicle, &queue_slice, view);
+            let chosen = self
+                .scheduler
+                .schedule(vehicle, &queue_slice, view, state.time);
             queue.retain(|r| *r != chosen);
             actions.push(SimAction::Dispatch {
                 vehicle_id: vid,

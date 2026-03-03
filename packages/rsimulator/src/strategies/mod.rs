@@ -47,12 +47,6 @@ pub trait RoutingStrategy: Send + Sync {
     /// Override to cache instance data needed for routing decisions.
     fn initialize(&mut self, _view: &InstanceView<'_>) {}
 
-    /// Called at the start of each simulation tick with the current time.
-    ///
-    /// Override to update any time-dependent state (e.g. `TimeUntilDue` scoring).
-    /// The default implementation is a no-op.
-    fn begin_tick(&mut self, _time: f32) {}
-
     /// Return `Some(vehicle_id)` to assign `request` to that vehicle's queue,
     /// or `None` to reject it immediately.
     fn route(
@@ -60,6 +54,7 @@ pub trait RoutingStrategy: Send + Sync {
         request: RequestId,
         vehicles: &[VehicleSnapshot],
         view: &InstanceView<'_>,
+        time: f32,
     ) -> Option<i64>;
 }
 
@@ -71,12 +66,6 @@ pub trait SchedulingStrategy: Send + Sync {
     /// Override to cache instance data needed for scheduling decisions.
     fn initialize(&mut self, _view: &InstanceView<'_>) {}
 
-    /// Called at the start of each simulation tick with the current time.
-    ///
-    /// Override to update any time-dependent state (e.g. `TimeUntilDue` scoring).
-    /// The default implementation is a no-op.
-    fn begin_tick(&mut self, _time: f32) {}
-
     /// Return a `RequestId` from `queue` to dispatch next.
     ///
     /// # Panics
@@ -86,6 +75,7 @@ pub trait SchedulingStrategy: Send + Sync {
         vehicle: &VehicleSnapshot,
         queue: &[RequestId],
         view: &InstanceView<'_>,
+        time: f32,
     ) -> RequestId;
 }
 

@@ -225,7 +225,9 @@ impl RustStrategy for BatchComposableStrategy {
             };
 
             let queue_slice: Vec<RequestId> = queue.iter().copied().collect();
-            let chosen = self.scheduler.schedule(vehicle, &queue_slice, view);
+            let chosen = self
+                .scheduler
+                .schedule(vehicle, &queue_slice, view, state.time);
             queue.retain(|r| *r != chosen);
             actions.push(SimAction::Dispatch {
                 vehicle_id: vid,
