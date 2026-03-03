@@ -19,4 +19,4 @@ jobs:
         run: uv sync
 
       - name: Run type check
-        run: uv run ty check
+        run: uv tool run ty check
