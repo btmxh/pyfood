@@ -1,17 +1,18 @@
-Development & running
----------------------
+# pyfood
 
-This repository used to provide a Docker-based development environment. The
-preferred workflow is now Nix flakes. Use direnv or `nix develop` to enter a
-nix-managed developer shell which provides Python, maturin and Rust toolchain
-without Docker.
+## Running instructions
 
-Typical steps:
+This codebase in written in a mix of Rust and Python code.
+[PyO3/maturin](https://github.com/PyO3/maturin) is used for Rust-Python FFI.
+This repo supports [uv](https://docs.astral.sh/uv/) and traditional venv setups
+for Nix.
 
-1. direnv allow (or `nix develop`)
-2. uv sync       # install python workspace deps via uv
-3. maturin develop --manifest-path packages/rsimulator/  # build rsimulator
-4. uv run pytest  # run tests
-
-If you must use the old docker flow, the `docker-compose.yaml` file is left
-for reference.
+Run tests:
+```sh
+# uv
+uv run pytest
+# venv
+source .venv/bin/activate
+pip install -e packages/dvrptw packages/rsimulator
+pytest
+```
