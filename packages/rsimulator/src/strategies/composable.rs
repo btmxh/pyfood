@@ -182,6 +182,10 @@ impl RustStrategy for ComposableStrategy {
     ) -> Vec<SimAction> {
         let mut actions: Vec<SimAction> = Vec::new();
 
+        // Notify sub-strategies of the current tick time.
+        self.router.begin_tick(state.time);
+        self.scheduler.begin_tick(state.time);
+
         // Phase 1: route newly-released requests (exactly once per request).
         let mut new_requests: Vec<RequestId> = state
             .released
@@ -244,7 +248,7 @@ impl RustStrategy for ComposableStrategy {
                     .iter()
                     .filter(|v| v.available_at > state.time)
                     .map(|v| v.available_at)
-                    .fold(f64::INFINITY, f64::min);
+                    .fold(f32::INFINITY, f32::min);
 
                 let next_release = state
                     .pending
@@ -252,9 +256,9 @@ impl RustStrategy for ComposableStrategy {
                     .filter(|rid| !state.released.contains(rid))
                     .filter_map(|rid| view.get(*rid))
                     .map(|r| r.release_time)
-                    .fold(f64::INFINITY, f64::min);
+                    .fold(f32::INFINITY, f32::min);
 
-                let until = f64::min(next_vehicle_free, next_release);
+                let until = f32::min(next_vehicle_free, next_release);
                 if until.is_finite() && until > state.time {
                     actions.push(SimAction::Wait { until });
                 }

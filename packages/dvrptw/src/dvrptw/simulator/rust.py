@@ -2,7 +2,7 @@
 
 from typing import Callable, cast
 
-from rsimulator import (  # noqa: F401
+from .rsimulator import (  # noqa: F401
     Simulator as _RustSimulator,
     NativeStrategyWrapper,
     NativeCallbackWrapper,
@@ -43,13 +43,25 @@ class RustSimulator(Simulator):
         # the Rust Simulator.__new__ will extract the Box<dyn RustStrategy> and
         # run the entire hot path without touching the GIL.
         #
+        # We use a type-name check rather than isinstance() as a defensive
+        # measure in case the type object identity is ever broken by unusual
+        # import paths.  The name is stable and sufficient for this purpose.
+        #
         # Otherwise wrap it in _RustStrategyAdapter so it receives a proper
         # SimulationState object (with attribute access) rather than the raw dict
         # that the Rust-side PyStrategyAdapter produces.
-        if isinstance(strategy, NativeStrategyWrapper):
+        if type(strategy).__name__ == "NativeStrategyWrapper":
             effective_strategy = strategy
         else:
-            effective_strategy = _RustStrategyAdapter(strategy, instance)
+            # `strategy` here is known to be a Python DispatchingStrategy
+            # (the NativeStrategyWrapper case is handled above).  Narrow the
+            # type for static checkers with an explicit cast so linters
+            # understand we are passing a DispatchingStrategy instance.
+            from typing import cast
+
+            effective_strategy = _RustStrategyAdapter(
+                cast(DispatchingStrategy, strategy), instance
+            )
 
         # Same logic for the callback: NativeCallbackWrapper passes through;
         # a Python callable is wrapped so it receives typed action objects.

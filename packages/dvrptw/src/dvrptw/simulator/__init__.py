@@ -16,6 +16,7 @@ from .rust import (
     NativeCallbackWrapper,
     greedy_strategy,
 )  # noqa: F401
+from . import rsimulator
 
 __all__ = [
     "DispatchEvent",
@@ -33,4 +34,5 @@ __all__ = [
     "NativeStrategyWrapper",
     "NativeCallbackWrapper",
     "greedy_strategy",
+    "rsimulator",
 ]

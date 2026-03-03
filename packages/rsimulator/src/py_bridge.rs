@@ -59,12 +59,12 @@ pub struct PyCallbackAdapter {
 }
 
 impl RustCallback for PyCallbackAdapter {
-    fn on_action(&self, time: f64, action: &SimAction, auto: bool) {
+    fn on_action(&self, time: f32, action: &SimAction, auto: bool) {
         Python::attach(|py| {
             let py_action = sim_action_to_py(py, action)
                 .expect("failed to convert SimAction to Python object for callback");
             self.py_callback
-                .call1(py, (time, py_action, auto))
+                .call1(py, (time as f64, py_action, auto))
                 .expect("Python action callback raised an exception");
         });
     }
@@ -81,7 +81,7 @@ impl RustCallback for PyCallbackAdapter {
 pub fn snapshot_to_py_dict(py: Python, state: &SimulationSnapshot) -> PyResult<Py<PyAny>> {
     let d = PyDict::new(py);
 
-    d.set_item("time", state.time)?;
+    d.set_item("time", state.time as f64)?;
 
     let pending = PySet::new(py, state.pending.iter().map(|r| r.0))?;
     d.set_item("pending_requests", pending)?;
@@ -98,11 +98,12 @@ pub fn snapshot_to_py_dict(py: Python, state: &SimulationSnapshot) -> PyResult<P
         let vd = PyDict::new(py);
         vd.set_item("vehicle_id", v.vehicle_id)?;
         vd.set_item("position", v.position.0)?;
-        vd.set_item("current_load", v.current_load)?;
-        vd.set_item("available_at", v.available_at)?;
+        vd.set_item("current_load", v.current_load as f64)?;
+        vd.set_item("available_at", v.available_at as f64)?;
         let route_ids: Vec<i64> = v.route.iter().map(|r| r.0).collect();
         vd.set_item("route", PyList::new(py, &route_ids)?)?;
-        vd.set_item("service_times", PyList::new(py, &v.service_times)?)?;
+        let st: Vec<f64> = v.service_times.iter().map(|&t| t as f64).collect();
+        vd.set_item("service_times", PyList::new(py, &st)?)?;
         vehicles_list.append(vd)?;
     }
     d.set_item("vehicles", vehicles_list)?;
@@ -144,7 +145,7 @@ pub fn sim_action_to_py(py: Python, action: &SimAction) -> PyResult<Py<PyAny>> {
         }
         SimAction::Wait { until } => {
             let cls = events_mod.getattr("WaitEvent")?;
-            Ok(cls.call1((*until,))?.unbind())
+            Ok(cls.call1((*until as f64,))?.unbind())
         }
         SimAction::Reject { request_id } => {
             // Use a plain dict for auto-rejects (matched by _RustCallbackAdapter);
@@ -183,7 +184,9 @@ pub fn extract_py_actions(py: Python, obj: Py<PyAny>) -> PyResult<Vec<SimAction>
             }
             "WaitEvent" => {
                 let until: f64 = item.getattr("until_time")?.extract()?;
-                SimAction::Wait { until }
+                SimAction::Wait {
+                    until: until as f32,
+                }
             }
             "RejectEvent" => {
                 let rid: i64 = item.getattr("request_id")?.extract()?;
@@ -210,7 +213,7 @@ pub fn extract_py_actions(py: Python, obj: Py<PyAny>) -> PyResult<Vec<SimAction>
                     }
                     "wait" => {
                         let t: f64 = d.get_item("until_time")?.unwrap().extract()?;
-                        SimAction::Wait { until: t }
+                        SimAction::Wait { until: t as f32 }
                     }
                     "reject" => {
                         let rid: i64 = d.get_item("request_id")?.unwrap().extract()?;
@@ -256,12 +259,15 @@ pub fn extract_request(obj: &Bound<PyAny>) -> PyResult<Request> {
     let is_depot: bool = obj.getattr("is_depot")?.extract()?;
     Ok(Request {
         id: RequestId(id),
-        x,
-        y,
-        demand,
-        time_window: TimeWindow { earliest, latest },
-        service_time,
-        release_time,
+        x: x as f32,
+        y: y as f32,
+        demand: demand as f32,
+        time_window: TimeWindow {
+            earliest: earliest as f32,
+            latest: latest as f32,
+        },
+        service_time: service_time as f32,
+        release_time: release_time as f32,
         is_depot,
     })
 }
@@ -272,7 +278,7 @@ pub fn extract_vehicle_spec(obj: &Bound<PyAny>) -> PyResult<VehicleSpec> {
     let speed: f64 = obj.getattr("speed")?.extract()?;
     Ok(VehicleSpec {
         id,
-        capacity,
-        speed,
+        capacity: capacity as f32,
+        speed: speed as f32,
     })
 }

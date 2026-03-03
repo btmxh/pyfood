@@ -8,5 +8,10 @@ edition = "2024"
 name = "rsimulator"
 crate-type = ["cdylib"]
 
+[features]
+default = ["simd"]
+simd = ["dep:wide"]
+
 [dependencies]
 pyo3 = "0.27.0"
+wide = { version = "1", optional = true }

@@ -35,6 +35,7 @@ from .simulator import (
     PythonSimulator,
     RustSimulator,
 )
+from .simulator import rsimulator
 
 __all__ = [
     "Time",
@@ -63,4 +64,5 @@ __all__ = [
     "SchedulerAction",
     "DispatchingStrategy",
     "ILPStrategy",
+    "rsimulator",
 ]

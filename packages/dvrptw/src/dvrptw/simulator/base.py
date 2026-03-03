@@ -8,7 +8,9 @@ from ..instance import DVRPTWInstance
 from .state import DispatchingStrategy, SimulationResult
 
 if TYPE_CHECKING:
-    from rsimulator import NativeStrategyWrapper as _NativeStrategyWrapperT
+    # Use the public typed wrapper so typecheckers see a stable, typed
+    # NativeStrategyWrapper without depending on the external extension stubs.
+    from .rsimulator import NativeStrategyWrapper as _NativeStrategyWrapperT
 
 
 class Simulator(ABC):

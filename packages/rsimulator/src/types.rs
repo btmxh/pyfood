@@ -39,7 +39,7 @@ pub struct RequestId(pub i64);
 #[derive(Debug, Clone)]
 pub enum SimAction {
     Dispatch { vehicle_id: i64, dest: RequestId },
-    Wait { until: f64 },
+    Wait { until: f32 },
     Reject { request_id: RequestId },
 }
 
@@ -55,10 +55,10 @@ pub enum SimAction {
 pub struct VehicleSnapshot {
     pub vehicle_id: i64,
     pub position: RequestId,
-    pub current_load: f64,
-    pub available_at: f64,
+    pub current_load: f32,
+    pub available_at: f32,
     pub route: Vec<RequestId>,
-    pub service_times: Vec<f64>,
+    pub service_times: Vec<f32>,
 }
 
 /// A lightweight snapshot of simulation state passed to [`RustStrategy`].
@@ -68,7 +68,7 @@ pub struct VehicleSnapshot {
 /// was constructed with.
 #[derive(Debug, Clone)]
 pub struct SimulationSnapshot {
-    pub time: f64,
+    pub time: f32,
     pub pending: HashSet<RequestId>,
     pub served: HashSet<RequestId>,
     pub rejected: HashSet<RequestId>,
