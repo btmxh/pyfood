@@ -1,19 +1,27 @@
 """Abstract Simulator base class."""
 
+from typing import Callable, Protocol
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Callable
-
-from .events import SchedulerAction
 from ..instance import DVRPTWInstance
-from .state import DispatchingStrategy, SimulationResult
+from .state import SimulationResult, SchedulerAction, SimulationSnapshot, InstanceView
 
-if TYPE_CHECKING:
-    # Use the public typed wrapper so typecheckers see a stable, typed
-    # NativeStrategyWrapper without depending on the external extension stubs.
-    from .rsimulator import NativeStrategyWrapper as _NativeStrategyWrapperT
+PythonEventCallback = Callable[[float, SchedulerAction, bool], None] | None
 
 
-class Simulator(ABC):
+class PythonDispatchStrategy(Protocol):
+    """Protocol for dispatching strategy implementations."""
+
+    def next_events(
+        self, state: SimulationSnapshot, view: InstanceView
+    ) -> list[SchedulerAction]:
+        """Called when simulator needs next actions from strategy.
+
+        Returns a list of DispatchEvent, WaitEvent, or RejectEvent.
+        """
+        ...
+
+
+class Simulator[StrategyType, CallbackType](ABC):
     """Abstract DVRPTW Simulation Engine.
 
     Subclasses implement ``run()`` with a concrete backend.
@@ -24,18 +32,21 @@ class Simulator(ABC):
     def __init__(
         self,
         instance: DVRPTWInstance,
-        strategy: "DispatchingStrategy | _NativeStrategyWrapperT",
-        action_callback: Callable[[float, SchedulerAction, bool], None] | None = None,
+        dispatch_strategy: StrategyType,
+        event_callback: CallbackType | None = None,
     ):
         instance.validate()
         self.instance = instance
-        self.strategy = strategy
-        self.action_callback = action_callback
-
-        self.served_requests: set[int] = set()
-        self.rejected_requests: set[int] = set()
 
     @abstractmethod
     def run(self) -> SimulationResult:
         """Execute the simulation and return results."""
         ...
+
+    @classmethod
+    @abstractmethod
+    def wrap_strategy(cls, strategy: PythonDispatchStrategy) -> StrategyType: ...
+
+    @classmethod
+    @abstractmethod
+    def wrap_callback(cls, callback: PythonEventCallback) -> CallbackType: ...

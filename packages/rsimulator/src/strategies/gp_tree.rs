@@ -48,6 +48,54 @@ use crate::types::VehicleSnapshot;
 use wide::{CmpEq, f32x8};
 
 // ---------------------------------------------------------------------------
+// Terminal enum
+// ---------------------------------------------------------------------------
+
+/// A named terminal feature used in a GP tree leaf.
+///
+/// Each variant corresponds to one observable value from the simulation context.
+/// `FlatGpTree` carries a `Vec<Terminal>` that maps tree-local terminal IDs
+/// (0, 1, 2, …) to their semantic features, allowing different trees to use
+/// independent, potentially disjoint terminal sets.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Terminal {
+    TravelTime,
+    WindowEarliest,
+    WindowLatest,
+    TimeUntilDue,
+    Demand,
+    CurrentLoad,
+    RemainingCapacity,
+    ReleaseTime,
+}
+
+impl Terminal {
+    /// Evaluate this terminal against the given context.
+    #[inline(always)]
+    pub fn eval(&self, ctx: &EvalContext<'_>) -> f32 {
+        match self {
+            Terminal::TravelTime => {
+                let dx = ctx.vehicle_pos_x - ctx.request.x;
+                let dy = ctx.vehicle_pos_y - ctx.request.y;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if ctx.speed == 0.0 {
+                    f32::INFINITY
+                } else {
+                    dist / ctx.speed
+                }
+            }
+            Terminal::WindowEarliest => ctx.request.time_window.earliest,
+            Terminal::WindowLatest => ctx.request.time_window.latest,
+            Terminal::TimeUntilDue => ctx.request.time_window.latest - ctx.current_time,
+            Terminal::Demand => ctx.request.demand,
+            Terminal::CurrentLoad => ctx.vehicle.current_load,
+            Terminal::RemainingCapacity => ctx.vehicle_capacity - ctx.vehicle.current_load,
+            Terminal::ReleaseTime => ctx.request.release_time,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // EvalContext
 // ---------------------------------------------------------------------------
 
@@ -63,6 +111,12 @@ pub struct EvalContext<'a> {
 }
 
 impl EvalContext<'_> {
+    /// Alias kept for API compatibility with `FlatTree`.
+    #[inline(always)]
+    pub fn terminal_value_f32(&self, id: u8) -> f32 {
+        self.terminal_value(id)
+    }
+
     /// Extract a terminal value by its flat terminal_id (0..=7), returned as f32.
     #[inline(always)]
     pub fn terminal_value(&self, id: u8) -> f32 {
@@ -87,10 +141,28 @@ impl EvalContext<'_> {
             _ => 0.0,
         }
     }
+}
 
-    /// Alias kept for API compatibility with `FlatTree`.
+// ---------------------------------------------------------------------------
+// RoleContext trait
+// ---------------------------------------------------------------------------
+
+/// Evaluation interface implemented by each strategy role's context type.
+///
+/// Each of the three GP tree roles (routing, sequencing, reject) defines its
+/// own concrete type implementing this trait, giving each role an independent,
+/// fixed terminal set that can evolve without affecting the others.
+pub trait RoleContext {
+    /// Number of terminals available in this role's context.
+    const NUM_TERMINALS: usize;
+    /// Value of the terminal with the given tree-local id.
+    fn eval_terminal(&self, id: u8) -> f32;
+}
+
+impl RoleContext for EvalContext<'_> {
+    const NUM_TERMINALS: usize = 8;
     #[inline(always)]
-    pub fn terminal_value_f32(&self, id: u8) -> f32 {
+    fn eval_terminal(&self, id: u8) -> f32 {
         self.terminal_value(id)
     }
 }
@@ -285,6 +357,23 @@ impl FlatTree {
         stack.pop().unwrap_or(0.0)
     }
 
+    /// Evaluate the tree for any [`RoleContext`] implementor.
+    pub fn eval_scalar_ctx<C: RoleContext>(&self, ctx: &C) -> f32 {
+        let mut stack: Vec<f32> = Vec::with_capacity(self.ops.len() / 2 + 1);
+        for &b in &self.ops {
+            if token_is_const(b) {
+                stack.push(decode_const7(b & 0x7F));
+            } else if token_is_terminal(b) {
+                stack.push(ctx.eval_terminal(b & 0x3F));
+            } else {
+                let r = stack.pop().unwrap_or(0.0);
+                let l = stack.pop().unwrap_or(0.0);
+                stack.push(apply_op_f32(b & 0x3F, l, r));
+            }
+        }
+        stack.pop().unwrap_or(0.0)
+    }
+
     /// Evaluate from a plain f32 terminal slice (no EvalContext).
     pub fn eval_scalar_from_slice(&self, terminals: &[f32]) -> f32 {
         let mut stack: Vec<f32> = Vec::with_capacity(self.ops.len() / 2 + 1);
@@ -427,9 +516,65 @@ pub struct FlatGpTree {
     pub(crate) inner: FlatTree,
 }
 
+#[pymethods]
+impl FlatGpTree {
+    /// Return the flat opcode array as bytes.
+    #[pyo3(name = "to_bytes")]
+    fn to_bytes(&self) -> Vec<u8> {
+        self.inner.ops.clone()
+    }
+
+    /// Read-only `.ops` attribute returning the opcode bytes as a byte array.
+    #[getter]
+    fn ops(&self) -> Vec<u8> {
+        self.inner.ops.clone()
+    }
+
+    /// Construct a FlatGpTree from raw opcode bytes (bytes/bytearray accepted).
+    #[staticmethod]
+    fn from_bytes(bytes: Vec<u8>) -> pyo3::PyResult<FlatGpTree> {
+        Ok(FlatGpTree {
+            inner: FlatTree { ops: bytes },
+        })
+    }
+}
+
+impl FlatGpTree {
+    /// Evaluate the tree for a single [`RoleContext`] implementor (scalar).
+    pub fn eval_ctx<C: RoleContext>(&self, ctx: &C) -> f32 {
+        self.inner.eval_scalar_ctx(ctx)
+    }
+
+    /// Evaluate the tree over a batch of [`RoleContext`] inputs.
+    ///
+    /// Builds the terminal matrix from each context using `C::NUM_TERMINALS`
+    /// and delegates to [`FlatTree::eval_batch`].
+    pub fn eval_batch_for<C: RoleContext>(&self, ctxs: &[C]) -> Vec<f32> {
+        if ctxs.is_empty() {
+            return Vec::new();
+        }
+        if C::NUM_TERMINALS == 0 {
+            let val = self.inner.eval_scalar_from_slice(&[]);
+            return vec![val; ctxs.len()];
+        }
+        let mut matrix: Vec<Vec<f32>> = vec![Vec::with_capacity(ctxs.len()); C::NUM_TERMINALS];
+        for ctx in ctxs {
+            for id in 0..C::NUM_TERMINALS as u8 {
+                matrix[id as usize].push(ctx.eval_terminal(id));
+            }
+        }
+        self.inner.eval_batch(&matrix)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Factory functions — FlatGpTree
 // ---------------------------------------------------------------------------
+
+// Terminal IDs match the ordering in EvalContext::terminal_value and the
+// per-role context types in gp_strategy:
+//   0=TravelTime, 1=WindowEarliest, 2=WindowLatest, 3=TimeUntilDue,
+//   4=Demand, 5=CurrentLoad, 6=RemainingCapacity, 7=ReleaseTime
 
 #[pyfunction]
 pub fn flat_gp_const(value: f64) -> FlatGpTree {

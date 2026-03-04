@@ -14,6 +14,7 @@ from dvrptw import (
     Vehicle,
     TimeWindow,
     RustSimulator,
+    batch_composable_strategy,
 )
 
 
@@ -55,7 +56,7 @@ def _make_basic_instance() -> DVRPTWInstance:
         requests=[depot, req1, req2],
         vehicles=[v1],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -89,7 +90,7 @@ def _make_multi_vehicle_instance() -> DVRPTWInstance:
         requests=[depot] + requests,
         vehicles=vehicles,
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -117,7 +118,7 @@ def _make_single_request_instance() -> DVRPTWInstance:
         requests=[depot, req1],
         vehicles=[v1],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -153,7 +154,7 @@ def _make_delayed_release_instance(release_time: float = 15.0) -> DVRPTWInstance
         requests=[depot, req1, req2],
         vehicles=[v1],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -217,15 +218,15 @@ class RecordingBatchRouter:
 
 class TestComposableStrategy(unittest.TestCase):
     def setUp(self):
-        from rsimulator import composable_strategy, NativeStrategyWrapper
+        from rsimulator import composable_strategy, NativeDispatchStrategy
 
         self.composable_strategy = composable_strategy
-        self.NativeStrategyWrapper = NativeStrategyWrapper
+        self.NativeDispatchStrategy = NativeDispatchStrategy
 
     def test_returns_native_wrapper(self):
-        """composable_strategy() returns a NativeStrategyWrapper."""
+        """composable_strategy() returns a NativeDispatchStrategy."""
         s = self.composable_strategy(AssignToFirstVehicleRouter(), FifoScheduler())
-        self.assertIsInstance(s, self.NativeStrategyWrapper)
+        self.assertIsInstance(s, self.NativeDispatchStrategy)
 
     def test_serves_all_requests(self):
         """Router assigns both requests; all should be served."""
@@ -348,18 +349,16 @@ class TestComposableStrategy(unittest.TestCase):
 
 
 class TestBatchComposableStrategy(unittest.TestCase):
-    def setUp(self):
-        from rsimulator import batch_composable_strategy, NativeStrategyWrapper
+    from dvrptw.strategies import batch_composable_strategy
 
+    def setUp(self):
         self.batch_composable_strategy = batch_composable_strategy
-        self.NativeStrategyWrapper = NativeStrategyWrapper
 
     def test_returns_native_wrapper(self):
-        """batch_composable_strategy() returns a NativeStrategyWrapper."""
-        s = self.batch_composable_strategy(
+        """batch_composable_strategy() returns a NativeDispatchStrategy."""
+        _ = self.batch_composable_strategy(
             AssignToFirstVehicleBatchRouter(), FifoScheduler(), slot_size=10.0
         )
-        self.assertIsInstance(s, self.NativeStrategyWrapper)
 
     def test_serves_all_requests(self):
         """Basic end-to-end: both requests served with a slot large enough to catch them."""

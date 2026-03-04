@@ -1,51 +1,70 @@
 """Pure-Python DVRPTW simulation backend."""
 
 import heapq
-from typing import Callable
+from typing import override
 
 from .events import DispatchEvent, RejectEvent, SchedulerAction, WaitEvent
 from ..instance import DVRPTWInstance
 from ..solution import Solution
 from .state import (
-    DispatchingStrategy,
     SimulationMetrics,
     SimulationResult,
-    SimulationState,
-    VehicleState,
+    VehicleSnapshot,
+    SimulationSnapshot,
+    InstanceView,
+    VehicleSpec,
 )
-from .base import Simulator
+from .base import Simulator, PythonDispatchStrategy, PythonEventCallback
 
 
-class PythonSimulator(Simulator):
+class PythonSimulator(Simulator[PythonDispatchStrategy, PythonEventCallback]):
     """Pure-Python DVRPTW simulation engine."""
 
-    strategy: DispatchingStrategy  # narrowed from base — PythonSimulator always needs a Python strategy
+    strategy: PythonDispatchStrategy
+    action_callback: PythonEventCallback
+    pending_requests: set[int]
+    rejected_requests: set[int]
+    served_requests: set[int]
 
     def __init__(
         self,
         instance: DVRPTWInstance,
-        strategy: DispatchingStrategy,
-        action_callback: Callable[[float, SchedulerAction, bool], None] | None = None,
+        strategy: PythonDispatchStrategy,
+        action_callback: PythonEventCallback = None,
     ):
         super().__init__(instance, strategy, action_callback)
 
         self.time = 0.0
         self.vehicles = self._init_vehicles()
         self.pending_requests = self._init_pending_requests()
+        self.rejected_requests = set()
+        self.served_requests = set()
 
         self._event_queue: list[tuple[float, str, int]] = []
         self._schedule_request_arrivals()
+
+        self.strategy = strategy
+        self.action_callback = action_callback or (lambda time, action, auto: None)
+
+    @classmethod
+    @override
+    def wrap_strategy(cls, strategy: PythonDispatchStrategy) -> PythonDispatchStrategy:
+        return strategy
+
+    @classmethod
+    @override
+    def wrap_callback(cls, callback: PythonEventCallback) -> PythonEventCallback:
+        return callback
 
     # ------------------------------------------------------------------
     # Initialisation helpers
     # ------------------------------------------------------------------
 
-    def _init_vehicles(self) -> list[VehicleState]:
-        depot_id = self.instance.depot_ids[0]
+    def _init_vehicles(self) -> list[VehicleSnapshot]:
         return [
-            VehicleState(
+            VehicleSnapshot(
                 vehicle_id=v.id,
-                position=depot_id,
+                position=self.instance.depot_id,
                 current_load=0.0,
                 available_at=0.0,
             )
@@ -70,7 +89,8 @@ class PythonSimulator(Simulator):
         ):
             self._process_next_event()
             state = self._create_state()
-            for action in self.strategy.next_events(state):
+            view = self._create_instance_view()
+            for action in self.strategy.next_events(state, view):
                 self._execute_action(action)
         return self._finalize_result()
 
@@ -121,22 +141,34 @@ class PythonSimulator(Simulator):
     # State snapshot
     # ------------------------------------------------------------------
 
-    def _create_state(self) -> SimulationState:
-        return SimulationState(
+    def _create_state(self) -> SimulationSnapshot:
+        return SimulationSnapshot(
             time=self.time,
-            pending_requests=self.pending_requests.copy(),
-            served_requests=self.served_requests.copy(),
-            rejected_requests=self.rejected_requests.copy(),
+            pending=self.pending_requests.copy(),
+            served=self.served_requests.copy(),
+            rejected=self.rejected_requests.copy(),
             vehicles=[self._copy_vehicle_state(v) for v in self.vehicles],
-            released_requests={
-                req.id: req
-                for req in self.instance.requests
-                if not req.is_depot and req.release_time <= self.time
-            },
         )
 
-    def _copy_vehicle_state(self, v: VehicleState) -> VehicleState:
-        return VehicleState(
+    def _create_instance_view(self) -> InstanceView:
+        return InstanceView(
+            released_requests={
+                req_id: self.instance.get_request(req_id)
+                for req_id in self.pending_requests
+            },
+            vehicles=[
+                VehicleSpec(
+                    id=v.id,
+                    capacity=v.capacity,
+                    speed=v.speed,
+                )
+                for v in self.instance.vehicles
+            ],
+            depot_id=self.instance.depot_id,
+        )
+
+    def _copy_vehicle_state(self, v: VehicleSnapshot) -> VehicleSnapshot:
+        return VehicleSnapshot(
             vehicle_id=v.vehicle_id,
             position=v.position,
             current_load=v.current_load,
@@ -223,7 +255,7 @@ class PythonSimulator(Simulator):
         self.pending_requests.remove(event.request_id)
         self.rejected_requests.add(event.request_id)
 
-    def _get_vehicle(self, vehicle_id: int) -> VehicleState:
+    def _get_vehicle(self, vehicle_id: int) -> VehicleSnapshot:
         for v in self.vehicles:
             if v.vehicle_id == vehicle_id:
                 return v
@@ -242,7 +274,7 @@ class PythonSimulator(Simulator):
 
     def _compute_metrics(self, solution: Solution) -> SimulationMetrics:
         total_cost = 0.0
-        depot_id = self.instance.depot_ids[0]
+        depot_id = self.instance.depot_id
 
         for route in solution.routes:
             if not route:

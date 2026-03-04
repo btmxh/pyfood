@@ -20,20 +20,28 @@ from .evaluator import (
     LinearNormEvaluator,
     StarNormEvaluator,
 )
-from .strategies import ILPStrategy
+from .strategies import (
+    ILPStrategy,
+    NativeBatchRouter,
+    NativeRouter,
+    NativeSequencer,
+    greedy_strategy,
+    composable_strategy,
+    batch_composable_strategy,
+)
 from .simulator import (
     DispatchEvent,
     WaitEvent,
     RejectEvent,
     SchedulerAction,
-    VehicleState,
-    SimulationState,
-    DispatchingStrategy,
+    VehicleSnapshot,
+    SimulationSnapshot,
     SimulationMetrics,
     SimulationResult,
     Simulator,
     PythonSimulator,
     RustSimulator,
+    PythonDispatchStrategy,
 )
 from .simulator import rsimulator
 
@@ -54,15 +62,23 @@ __all__ = [
     "Simulator",
     "PythonSimulator",
     "RustSimulator",
-    "SimulationState",
+    "SimulationSnapshot",
     "SimulationResult",
     "SimulationMetrics",
     "VehicleState",
+    "VehicleSnapshot",
     "DispatchEvent",
     "WaitEvent",
     "RejectEvent",
     "SchedulerAction",
-    "DispatchingStrategy",
+    "DispatchStrategy",
     "ILPStrategy",
+    "PythonDispatchStrategy",
     "rsimulator",
+    "NativeBatchRouter",
+    "NativeRouter",
+    "NativeSequencer",
+    "composable_strategy",
+    "batch_composable_strategy",
+    "greedy_strategy",
 ]

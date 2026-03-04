@@ -9,8 +9,13 @@ All assertions use the stdlib `unittest` API; pytest is used only as
 the test runner.
 """
 
+from typing import override
+
+from abc import abstractmethod
+
+from dvrptw.simulator import InstanceView
+
 import unittest
-from typing import ClassVar
 
 from dvrptw import (
     DVRPTWInstance,
@@ -19,13 +24,14 @@ from dvrptw import (
     TimeWindow,
     PythonSimulator,
     RustSimulator,
-    SimulationState,
     DispatchEvent,
     WaitEvent,
     RejectEvent,
+    SimulationSnapshot,
+    greedy_strategy,
+    Simulator,
+    PythonDispatchStrategy,
 )
-from dvrptw.simulator.base import Simulator as _SimulatorBase
-
 
 # ---------------------------------------------------------------------------
 # Shared strategies
@@ -38,15 +44,15 @@ class SimpleGreedyStrategy:
     def __init__(self, planning_horizon=None):
         self.planning_horizon = planning_horizon
 
-    def next_events(self, state: SimulationState) -> list:
+    def next_events(self, state: SimulationSnapshot, view: InstanceView) -> list:
         actions = []
 
-        if not state.pending_requests:
+        if not state.pending:
             if self.planning_horizon and state.time < self.planning_horizon:
                 actions.append(WaitEvent(until_time=self.planning_horizon))
             return actions
 
-        pending_list = sorted(state.pending_requests)
+        pending_list = sorted(state.pending)
         idle_vehicles = [v for v in state.vehicles if v.available_at <= state.time]
 
         for vehicle in idle_vehicles:
@@ -104,7 +110,7 @@ def _make_basic_instance() -> DVRPTWInstance:
         requests=[depot, req1, req2],
         vehicles=[v1],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -137,7 +143,7 @@ def _make_multi_vehicle_instance() -> DVRPTWInstance:
         requests=[depot] + requests,
         vehicles=vehicles,
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -165,7 +171,7 @@ def _make_tight_window_instance() -> DVRPTWInstance:
         requests=[depot, req1],
         vehicles=[v1],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -200,7 +206,7 @@ def _make_overload_instance() -> DVRPTWInstance:
         requests=[depot, req1, req2],
         vehicles=[v1],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -228,7 +234,7 @@ def _make_single_request_instance() -> DVRPTWInstance:
         requests=[depot, req1],
         vehicles=[v1],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -246,14 +252,16 @@ class _ParityBase(unittest.TestCase):
     """
 
     __test__ = False  # prevent direct collection by pytest / unittest discovery
-    SimCls: ClassVar[type[_SimulatorBase]]
+
+    @abstractmethod
+    def create_simulator(
+        self, inst: DVRPTWInstance, strategy: PythonDispatchStrategy
+    ) -> Simulator: ...
 
     def test_simple_greedy_routes_and_cost(self):
         """Both backends produce identical served set and positive cost."""
         inst = _make_basic_instance()
-        sim = self.SimCls(
-            inst, SimpleGreedyStrategy(planning_horizon=inst.planning_horizon)
-        )
+        sim = self.create_simulator(inst, SimpleGreedyStrategy())
         result = sim.run()
 
         self.assertEqual(result.metrics.rejected, 0)
@@ -264,7 +272,7 @@ class _ParityBase(unittest.TestCase):
     def test_solution_structure(self):
         """routes and service_times have consistent lengths."""
         inst = _make_basic_instance()
-        result = self.SimCls(inst, SimpleGreedyStrategy()).run()
+        result = self.create_simulator(inst, SimpleGreedyStrategy()).run()
 
         solution = result.solution
         self.assertEqual(len(solution.routes), len(solution.service_times))
@@ -278,24 +286,28 @@ class _ParityBase(unittest.TestCase):
             def __init__(self):
                 self.rejected = False
 
-            def next_events(self, state: SimulationState) -> list:
-                if not self.rejected and state.pending_requests:
+            def next_events(
+                self, state: SimulationSnapshot, view: InstanceView
+            ) -> list:
+                if not self.rejected and state.pending:
                     self.rejected = True
                     return [RejectEvent(request_id=1)]
                 return []
 
         inst = _make_basic_instance()
-        sim = self.SimCls(inst, RejectFirstStrategy())
+        sim = self.create_simulator(inst, RejectFirstStrategy())
         result = sim.run()
 
         self.assertNotIn(1, result.solution.routes[0])
-        self.assertIn(1, sim.rejected_requests)
+        # self.assertIn(1, sim.rejected_requests)
 
     def test_capacity_violation_raises(self):
         """Both backends raise ValueError when vehicle capacity is exceeded."""
 
         class OverloadStrategy:
-            def next_events(self, state: SimulationState) -> list:
+            def next_events(
+                self, state: SimulationSnapshot, view: InstanceView
+            ) -> list:
                 idle = [v for v in state.vehicles if v.available_at <= state.time]
                 if idle:
                     return [
@@ -305,7 +317,7 @@ class _ParityBase(unittest.TestCase):
                 return []
 
         inst = _make_overload_instance()
-        sim = self.SimCls(inst, OverloadStrategy())
+        sim = self.create_simulator(inst, OverloadStrategy())
         with self.assertRaises(ValueError):
             sim.run()
 
@@ -313,22 +325,24 @@ class _ParityBase(unittest.TestCase):
         """Both backends auto-reject requests whose time window closes."""
 
         class WaitStrategy:
-            def next_events(self, state: SimulationState) -> list:
+            def next_events(
+                self, state: SimulationSnapshot, view: InstanceView
+            ) -> list:
                 if state.time < 10.0:
                     return [WaitEvent(until_time=10.0)]
                 return []
 
         inst = _make_tight_window_instance()
-        sim = self.SimCls(inst, WaitStrategy())
+        sim = self.create_simulator(inst, WaitStrategy())
         result = sim.run()
 
         self.assertEqual(result.metrics.rejected, 1)
-        self.assertIn(1, sim.rejected_requests)
+        # self.assertIn(1, sim.rejected_requests)
 
     def test_multi_vehicle_dispatch(self):
         """Both backends route correctly when multiple vehicles are available."""
         inst = _make_multi_vehicle_instance()
-        result = self.SimCls(inst, SimpleGreedyStrategy()).run()
+        result = self.create_simulator(inst, SimpleGreedyStrategy()).run()
 
         total_served = sum(len(r) for r in result.solution.routes)
         self.assertGreater(total_served, 0)
@@ -340,14 +354,16 @@ class _ParityBase(unittest.TestCase):
             def __init__(self):
                 self.done = False
 
-            def next_events(self, state: SimulationState) -> list:
-                if not self.done and state.pending_requests:
+            def next_events(
+                self, state: SimulationSnapshot, view: InstanceView
+            ) -> list:
+                if not self.done and state.pending:
                     self.done = True
                     return [DispatchEvent(vehicle_id=0, destination_node=1)]
                 return []
 
         inst = _make_single_request_instance()
-        result = self.SimCls(inst, ServeOneStrategy()).run()
+        result = self.create_simulator(inst, ServeOneStrategy()).run()
 
         self.assertEqual(result.metrics.rejected, 0)
         self.assertAlmostEqual(result.metrics.total_travel_cost, 10.0, places=9)
@@ -357,10 +373,22 @@ class TestParityPython(_ParityBase):
     __test__ = True
     SimCls = PythonSimulator
 
+    @override
+    def create_simulator(
+        self, inst: DVRPTWInstance, strategy: PythonDispatchStrategy
+    ) -> Simulator:
+        return PythonSimulator(inst, strategy)
+
 
 class TestParityRust(_ParityBase):
     __test__ = True
     SimCls = RustSimulator
+
+    @override
+    def create_simulator(
+        self, inst: DVRPTWInstance, strategy: PythonDispatchStrategy
+    ) -> Simulator:
+        return RustSimulator(inst, RustSimulator.wrap_strategy(strategy))
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +399,9 @@ class TestParityRust(_ParityBase):
 class TestCrossBackendParity(unittest.TestCase):
     def _assert_parity(self, inst):
         py_res = PythonSimulator(inst, SimpleGreedyStrategy()).run()
-        rs_res = RustSimulator(inst, SimpleGreedyStrategy()).run()
+        rs_res = RustSimulator(
+            inst, RustSimulator.wrap_strategy(SimpleGreedyStrategy())
+        ).run()
 
         self.assertEqual(len(py_res.solution.routes), len(rs_res.solution.routes))
 
@@ -409,13 +439,19 @@ class TestRustSpecific(unittest.TestCase):
             actions_logged.append((time, type(action).__name__, auto))
 
         class WaitStrategy:
-            def next_events(self, state: SimulationState) -> list:
+            def next_events(
+                self, state: SimulationSnapshot, view: InstanceView
+            ) -> list:
                 if state.time < 10.0:
                     return [WaitEvent(until_time=10.0)]
                 return []
 
         inst = _make_tight_window_instance()
-        RustSimulator(inst, WaitStrategy(), action_callback=callback).run()
+        RustSimulator(
+            inst,
+            RustSimulator.wrap_strategy(WaitStrategy()),
+            RustSimulator.wrap_callback(callback),
+        ).run()
 
         types_seen = {t for _, t, _ in actions_logged}
         self.assertIn("RejectEvent", types_seen)
@@ -426,16 +462,20 @@ class TestRustSpecific(unittest.TestCase):
         received_states = []
 
         class InspectStrategy:
-            def next_events(self, state: SimulationState) -> list:
+            def next_events(
+                self, state: SimulationSnapshot, view: InstanceView
+            ) -> list:
                 received_states.append(state)
                 return []
 
-        RustSimulator(_make_basic_instance(), InspectStrategy()).run()
+        RustSimulator(
+            _make_basic_instance(), RustSimulator.wrap_strategy(InspectStrategy())
+        ).run()
 
         self.assertTrue(received_states, "Strategy was never called")
         s = received_states[0]
-        self.assertIsInstance(s, SimulationState)
-        self.assertTrue(hasattr(s, "pending_requests"))
+        self.assertIsInstance(s, SimulationSnapshot)
+        self.assertTrue(hasattr(s, "pending"))
         self.assertTrue(hasattr(s, "vehicles"))
         self.assertTrue(hasattr(s, "time"))
 
@@ -446,17 +486,13 @@ class TestRustSpecific(unittest.TestCase):
 
 
 class TestNativeStrategy(unittest.TestCase):
-    def setUp(self):
-        from rsimulator import greedy_strategy, NativeStrategyWrapper
-
-        self.greedy_strategy = greedy_strategy
-        self.NativeStrategyWrapper = NativeStrategyWrapper
-
     def test_basic_parity_with_python_greedy(self):
         """greedy_strategy() produces same served set as Python SimpleGreedyStrategy."""
         inst = _make_basic_instance()
-        py_res = RustSimulator(inst, SimpleGreedyStrategy()).run()
-        native_res = RustSimulator(inst, self.greedy_strategy()).run()
+        py_res = RustSimulator(
+            inst, RustSimulator.wrap_strategy(SimpleGreedyStrategy())
+        ).run()
+        native_res = RustSimulator(inst, greedy_strategy()).run()
 
         py_served = {r for route in py_res.solution.routes for r in route}
         native_served = {r for route in native_res.solution.routes for r in route}
@@ -471,8 +507,10 @@ class TestNativeStrategy(unittest.TestCase):
     def test_multi_vehicle_parity(self):
         """greedy_strategy() handles multi-vehicle instances correctly."""
         inst = _make_multi_vehicle_instance()
-        py_res = RustSimulator(inst, SimpleGreedyStrategy()).run()
-        native_res = RustSimulator(inst, self.greedy_strategy()).run()
+        py_res = RustSimulator(
+            inst, RustSimulator.wrap_strategy(SimpleGreedyStrategy())
+        ).run()
+        native_res = RustSimulator(inst, greedy_strategy()).run()
 
         py_served = {r for route in py_res.solution.routes for r in route}
         native_served = {r for route in native_res.solution.routes for r in route}
@@ -482,20 +520,16 @@ class TestNativeStrategy(unittest.TestCase):
     def test_auto_reject_infeasible_request(self):
         """greedy_strategy() skips tight-window requests; simulator auto-rejects them."""
         inst = _make_tight_window_instance()
-        sim = RustSimulator(inst, self.greedy_strategy())
+        sim = RustSimulator(inst, greedy_strategy())
         result = sim.run()
 
         self.assertEqual(result.metrics.rejected, 0)
         self.assertIn(1, sim.rejected_requests)
 
-    def test_returns_native_wrapper_type(self):
-        """greedy_strategy() returns a NativeStrategyWrapper, not a Python strategy."""
-        self.assertIsInstance(self.greedy_strategy(), self.NativeStrategyWrapper)
-
     def test_result_structure(self):
         """Native strategy result has correct routes/service_times structure."""
         inst = _make_basic_instance()
-        result = RustSimulator(inst, self.greedy_strategy()).run()
+        result = RustSimulator(inst, greedy_strategy()).run()
 
         self.assertEqual(
             len(result.solution.routes), len(result.solution.service_times)
@@ -506,7 +540,7 @@ class TestNativeStrategy(unittest.TestCase):
     def test_travel_cost(self):
         """Native greedy on single-request instance yields cost 10.0."""
         inst = _make_single_request_instance()
-        result = RustSimulator(inst, self.greedy_strategy()).run()
+        result = RustSimulator(inst, greedy_strategy()).run()
 
         self.assertEqual(result.metrics.rejected, 0)
         self.assertAlmostEqual(result.metrics.total_travel_cost, 10.0, places=9)

@@ -39,20 +39,15 @@
                 ruff
                 ty
 
+                just
+
                 # Rust toolchain for building the Rust simulator
                 rustc
                 cargo
                 rustfmt
                 clippy
 
-                # Python runtime & tools (native, nix-managed)
-                python3
-                python3Packages.pip
-                python3Packages.setuptools
-                python3Packages.virtualenv
-
-                # Tool to build the Rust/Python extension (maturin)
-                maturin
+                uv
 
                 # Native build deps commonly needed to compile Python extensions
                 pkg-config

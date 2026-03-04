@@ -94,7 +94,7 @@ class DVRPTWInstance:
     requests: list[Request] = field(default_factory=list)
     vehicles: list[Vehicle] = field(default_factory=list)
     planning_horizon: Time | None = None
-    depot_ids: list[ID] = field(default_factory=list)
+    depot_id: ID = 0
 
     def get_request(self, req_id: ID) -> Request:
         for r in self.requests:
@@ -105,13 +105,14 @@ class DVRPTWInstance:
     def validate(self) -> None:
         for r in self.requests:
             r.time_window.validate()
-        if not self.depot_ids:
-            raise ValueError("At least one depot id must be provided in depot_ids")
-        depot_set = {r.id for r in self.requests if r.is_depot}
-        for di in self.depot_ids:
-            if di not in depot_set:
+        if not self.requests[self.depot_id].is_depot:
+            raise ValueError(
+                f"Request at depot_id {self.depot_id} must be marked as depot"
+            )
+        for r in self.requests:
+            if r.is_depot and r.id != self.depot_id:
                 raise ValueError(
-                    f"depot id {di} not present or not marked as depot in requests"
+                    f"Request id {r.id} is marked as depot but does not match depot_id {self.depot_id}"
                 )
 
     def pairwise_distance_matrix(self) -> dict[tuple[ID, ID], float]:
@@ -127,7 +128,7 @@ class DVRPTWInstance:
             "requests": [r.to_dict() for r in self.requests],
             "vehicles": [v.to_dict() for v in self.vehicles],
             "planning_horizon": self.planning_horizon,
-            "depot_ids": self.depot_ids,
+            "depot_id": self.depot_id,
         }
         return json.dumps(obj, indent=2)
 
@@ -141,7 +142,7 @@ class DVRPTWInstance:
             requests=reqs,
             vehicles=vehs,
             planning_horizon=o.get("planning_horizon"),
-            depot_ids=o.get("depot_ids", []),
+            depot_id=o.get("depot_id"),
         )
         return inst
 
@@ -220,6 +221,6 @@ def load_vrpr_csv(
         requests=[depot] + requests,
         vehicles=vehicles,
         planning_horizon=None,
-        depot_ids=[depot.id],
+        depot_id=depot.id,
     )
     return inst

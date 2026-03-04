@@ -32,7 +32,7 @@ def _make_instance(
         requests=[depot] + customers,
         vehicles=vehicles,
         planning_horizon=planning_horizon,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 

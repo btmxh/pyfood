@@ -2,20 +2,20 @@
 
 from .events import DispatchEvent, RejectEvent, SchedulerAction, WaitEvent
 from .state import (
-    DispatchingStrategy,
     SimulationMetrics,
     SimulationResult,
-    SimulationState,
-    VehicleState,
+    SimulationSnapshot,
+    VehicleSnapshot,
+    VehicleSpec,
+    InstanceView,
 )
-from .base import Simulator
+from .base import Simulator, PythonDispatchStrategy, PythonEventCallback
 from .python import PythonSimulator
 from .rust import (
     RustSimulator,
-    NativeStrategyWrapper,
-    NativeCallbackWrapper,
-    greedy_strategy,
-)  # noqa: F401
+    NativeDispatchStrategy,
+    NativeEventCallback,
+)
 from . import rsimulator
 
 __all__ = [
@@ -25,14 +25,25 @@ __all__ = [
     "SchedulerAction",
     "VehicleState",
     "SimulationState",
-    "DispatchingStrategy",
+    "PythonDispatchStrategy",
+    "PythonEventCallback",
     "SimulationMetrics",
     "SimulationResult",
+    "SimulationSnapshot",
+    "VehicleSnapshot",
+    "VehicleSpec",
+    "InstanceView",
     "Simulator",
     "PythonSimulator",
     "RustSimulator",
-    "NativeStrategyWrapper",
-    "NativeCallbackWrapper",
+    "NativeDispatchStrategy",
+    "NativeEventCallback",
     "greedy_strategy",
     "rsimulator",
 ]
+
+# Backwards-compatible aliases: older code/tests expect `SimulationState`
+# and `VehicleState` names. Provide simple aliases to the newer
+# `SimulationSnapshot`/`VehicleSnapshot` dataclasses.
+VehicleState = VehicleSnapshot
+SimulationState = SimulationSnapshot

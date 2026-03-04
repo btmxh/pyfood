@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 import os
 import shutil
 
@@ -62,10 +61,7 @@ from dvrptw.simulator.events import (
     WaitEvent,
     SchedulerAction,
 )
-from dvrptw.simulator.state import SimulationState
-
-if TYPE_CHECKING:
-    pass
+from dvrptw.simulator.state import SimulationSnapshot, InstanceView
 
 log = logging.getLogger(__name__)
 
@@ -427,17 +423,19 @@ class ILPStrategy:
         self._dispatched: set[int] = set()
 
     # ------------------------------------------------------------------
-    # DispatchingStrategy protocol
+    # DispatchStrategy protocol
     # ------------------------------------------------------------------
 
-    def next_events(self, state: SimulationState) -> list[SchedulerAction]:
+    def next_events(
+        self, state: SimulationSnapshot, instance_view: InstanceView
+    ) -> list[SchedulerAction]:
         actions: list[SchedulerAction] = []
 
         # Reject any pending request that the ILP plan does not serve
         planned_requests: set[int] = {
             node for plan in self._plans for node in plan.stops
         }
-        for req_id in state.pending_requests:
+        for req_id in state.pending:
             if req_id not in planned_requests and req_id not in self._rejected:
                 self._rejected.add(req_id)
                 actions.append(RejectEvent(request_id=req_id))
@@ -457,7 +455,7 @@ class ILPStrategy:
             node_id, planned_start = plan.peek()  # type: ignore[misc]
 
             # Check if the request has been released yet
-            if node_id not in state.released_requests:
+            if node_id not in instance_view.released_requests:
                 # Not yet released — we need to wait until it is
                 try:
                     release_t = self._instance.get_request(node_id).release_time
@@ -471,7 +469,7 @@ class ILPStrategy:
                 continue
 
             # Check if the request is still pending (not already served/rejected)
-            if node_id not in state.pending_requests:
+            if node_id not in state.pending:
                 # Already handled (served by another vehicle or rejected);
                 # skip this stop and try the next one
                 plan.advance()
@@ -481,7 +479,7 @@ class ILPStrategy:
                 if peek is None:
                     continue
                 node_id, planned_start = peek
-                if node_id not in state.pending_requests:
+                if node_id not in state.pending:
                     continue  # give up for this cycle; will retry next event
 
             actions.append(DispatchEvent(vehicle_id=vid, destination_node=node_id))

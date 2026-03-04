@@ -10,9 +10,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use pyo3::prelude::*;
 
 use super::{RoutingStrategy, SchedulingStrategy};
-use crate::instance::{InstanceView, RustStrategy};
+use crate::instance::{DispatchStrategy, InstanceView};
 use crate::types::{
-    NativeStrategyWrapper, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
+    NativeDispatchStrategy, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
 };
 
 use super::{build_py_instance_view, build_py_vehicle, build_py_vehicles};
@@ -43,6 +43,7 @@ pub struct PyRoutingAdapter {
 impl RoutingStrategy for PyRoutingAdapter {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         Python::attach(|py| {
+            eprintln!("PyRoutingAdapter::initialize() called");
             self.py_view =
                 Some(build_py_instance_view(py, view).expect("failed to build instance view dict"));
         });
@@ -58,11 +59,13 @@ impl RoutingStrategy for PyRoutingAdapter {
         Python::attach(|py| {
             let py_vehicles =
                 build_py_vehicles(py, vehicles).expect("failed to build vehicles list");
-            let py_view = self
-                .py_view
-                .as_ref()
-                .expect("initialize() must be called before route()")
-                .clone_ref(py);
+            // Build instance view on-demand if initialize() wasn't called.
+            if self.py_view.is_none() {
+                let built =
+                    build_py_instance_view(py, _view).expect("failed to build instance view dict");
+                self.py_view = Some(built);
+            }
+            let py_view = self.py_view.as_ref().unwrap().clone_ref(py);
             let result = self
                 .py_router
                 .call_method1(py, "route", (request.0, py_vehicles, py_view))
@@ -104,6 +107,7 @@ pub struct PySchedulingAdapter {
 impl SchedulingStrategy for PySchedulingAdapter {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         Python::attach(|py| {
+            eprintln!("PySchedulingAdapter::initialize() called");
             self.py_view =
                 Some(build_py_instance_view(py, view).expect("failed to build instance view dict"));
         });
@@ -119,11 +123,13 @@ impl SchedulingStrategy for PySchedulingAdapter {
         Python::attach(|py| {
             let py_vehicle = build_py_vehicle(py, vehicle).expect("failed to build vehicle dict");
             let py_queue: Vec<i64> = queue.iter().map(|r| r.0).collect();
-            let py_view = self
-                .py_view
-                .as_ref()
-                .expect("initialize() must be called before schedule()")
-                .clone_ref(py);
+            // Build instance view on-demand if initialize() wasn't called.
+            if self.py_view.is_none() {
+                let built =
+                    build_py_instance_view(py, _view).expect("failed to build instance view dict");
+                self.py_view = Some(built);
+            }
+            let py_view = self.py_view.as_ref().unwrap().clone_ref(py);
             let result = self
                 .py_scheduler
                 .call_method1(py, "schedule", (py_vehicle, py_queue, py_view))
@@ -168,8 +174,9 @@ pub struct ComposableStrategy {
     pub routed: HashSet<RequestId>,
 }
 
-impl RustStrategy for ComposableStrategy {
+impl DispatchStrategy for ComposableStrategy {
     fn initialize(&mut self, view: &InstanceView<'_>) {
+        eprintln!("ComposableStrategy::initialize() called");
         self.router.initialize(view);
         self.scheduler.initialize(view);
         for vs in view.vehicle_specs() {
@@ -182,6 +189,12 @@ impl RustStrategy for ComposableStrategy {
         state: &SimulationSnapshot,
         view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
+        // Defensive: ensure sub-strategies have been initialized. Some
+        // call-sites may not invoke `initialize` on the boxed trait object
+        // before the first `next_events` call; calling it here is idempotent
+        // and cheap for Python adapters (rebuilds their cached `py_view`).
+        self.router.initialize(view);
+        self.scheduler.initialize(view);
         let mut actions: Vec<SimAction> = Vec::new();
 
         // Phase 1: route newly-released requests (exactly once per request).
@@ -273,7 +286,7 @@ impl RustStrategy for ComposableStrategy {
 // Factory function
 // ---------------------------------------------------------------------------
 
-/// Return a [`NativeStrategyWrapper`] using the composable strategy template.
+/// Return a [`NativeDispatchStrategy`] using the composable strategy template.
 ///
 /// `router` and `scheduler` are Python objects implementing the corresponding
 /// protocols (see [`PyRoutingAdapter`] and [`PySchedulingAdapter`] for the
@@ -284,8 +297,8 @@ impl RustStrategy for ComposableStrategy {
 /// sim = Simulator(instance, strategy)
 /// ```
 #[pyfunction]
-pub fn composable_strategy(router: Py<PyAny>, scheduler: Py<PyAny>) -> NativeStrategyWrapper {
-    NativeStrategyWrapper {
+pub fn composable_strategy(router: Py<PyAny>, scheduler: Py<PyAny>) -> NativeDispatchStrategy {
+    NativeDispatchStrategy {
         inner: Some(Box::new(ComposableStrategy {
             router: Box::new(PyRoutingAdapter {
                 py_router: router,

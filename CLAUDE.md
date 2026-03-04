@@ -25,7 +25,7 @@ This is a monorepo using uv workspace with two main packages:
     - `evaluator.py`: `Evaluator` protocol and implementations (`WeightedSumEvaluator`, `StarNormEvaluator`, `LinearNormEvaluator`)
     - `simulator/` subpackage:
       - `base.py`: Abstract `Simulator` class
-      - `state.py`: `SimulationState`, `VehicleState`, `DispatchingStrategy` protocol, `SimulationResult`, `SimulationMetrics`
+      - `state.py`: `SimulationState`, `VehicleState`, `DispatchStrategy` protocol, `SimulationResult`, `SimulationMetrics`
       - `events.py`: `DispatchEvent`, `WaitEvent`, `RejectEvent`, `SchedulerAction`
       - `python.py`: `PythonSimulator` (pure Python backend)
       - `rust.py`: `RustSimulator` (Rust-backed backend via rsimulator)
@@ -146,7 +146,7 @@ class Solution:
 Core dataclass representing a DVRPTW problem instance:
 - `requests: list[Request]`: List of all nodes (depot + customers), where depot has `is_depot=True`
 - `vehicles: list[Vehicle]`: Fleet specifications with capacity and speed
-- `depot_ids: list[ID]`: IDs of depot nodes (typically just `[0]`)
+- `depot_id: ID`: ID of depot nodes (typically just `0`)
 - `planning_horizon: Time | None`: Optional time limit
 
 Each `Request` contains:
@@ -194,7 +194,7 @@ result = simulator.run()  # Returns SimulationResult
 ```
 
 **How it works:**
-1. Strategy implements `DispatchingStrategy.next_events(state: SimulationState) -> list[SchedulerAction]`
+1. Strategy implements `DispatchStrategy.next_events(state: SimulationState) -> list[SchedulerAction]`
 2. Simulator calls strategy at each event (request arrivals, vehicle completions, wake-ups)
 3. Strategy returns actions: `DispatchEvent`, `WaitEvent`, or `RejectEvent`
 4. Simulator validates constraints and advances time accordingly
@@ -208,14 +208,14 @@ result = simulator.run()  # Returns SimulationResult
 **Backends:**
 - `PythonSimulator` — pure Python, always available
 - `RustSimulator` — delegates to `rsimulator` extension; requires `maturin develop`
-  - Also supports native Rust strategies via `NativeStrategyWrapper` (from rsimulator module)
+  - Also supports native Rust strategies via `NativeDispatchStrategy` (from rsimulator module)
   - Example: `rsimulator.greedy_strategy()` returns a native strategy that runs entirely in Rust
 
 ### Dispatching Strategies
 
-Strategies implement the `DispatchingStrategy` protocol:
+Strategies implement the `DispatchStrategy` protocol:
 ```python
-class DispatchingStrategy(Protocol):
+class DispatchStrategy(Protocol):
     def next_events(self, state: SimulationState) -> list[SchedulerAction]:
         """Called when the simulator needs the next batch of actions."""
 ```

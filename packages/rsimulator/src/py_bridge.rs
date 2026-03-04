@@ -1,24 +1,29 @@
+use std::collections::HashSet;
+
 /// py_bridge.rs — All PyO3 glue code: Python ↔ Rust adapters and helpers.
 ///
 /// # Contents
 /// - [`PyStrategyAdapter`]  — wraps a Python strategy object as `Box<dyn RustStrategy>`
 /// - [`PyCallbackAdapter`]  — wraps a Python callable as `Box<dyn RustCallback>`
 /// - [`snapshot_to_py_dict`] — serialises `SimulationSnapshot` to a Python dict
-/// - [`sim_action_to_py`]   — converts `SimAction` to a Python action object
+/// - [`sim_action_to_py_dict`]   — converts `SimAction` to a Python dict
 /// - [`extract_py_actions`] — deserialises Python action list to `Vec<SimAction>`
 /// - [`extract_request`]    — extracts a `Request` from a Python object
 /// - [`extract_vehicle_spec`] — extracts a `VehicleSpec` from a Python object
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PySet, PyTuple};
 
-use crate::instance::{InstanceView, Request, RustCallback, RustStrategy, TimeWindow, VehicleSpec};
+use crate::instance::{
+    DispatchStrategy, EventCallback, InstanceView, Request, TimeWindow, VehicleSpec,
+};
 use crate::types::{RequestId, SimAction, SimulationSnapshot};
+use crate::{NativeDispatchStrategy, NativeEventCallback};
 
 // ---------------------------------------------------------------------------
 // PyStrategyAdapter — wraps Py<PyAny> as Box<dyn RustStrategy>
 // ---------------------------------------------------------------------------
 
-/// Adapts a Python `DispatchingStrategy` to the [`RustStrategy`] trait.
+/// Adapts a Python `DispatchStrategy` to the [`RustStrategy`] trait.
 ///
 /// This is the only place that acquires the GIL and performs PyO3
 /// serialisation.  All simulation logic remains in Rust; Python is called only
@@ -27,22 +32,37 @@ use crate::types::{RequestId, SimAction, SimulationSnapshot};
 /// The Python strategy receives a state dict (same format as before) and
 /// returns a list of `DispatchEvent | WaitEvent | RejectEvent` Python objects
 /// or plain dicts.
-pub struct PyStrategyAdapter {
+pub struct PyDispatchStrategyAdapter {
     pub py_strategy: Py<PyAny>,
 }
 
-impl RustStrategy for PyStrategyAdapter {
+impl PyDispatchStrategyAdapter {
+    pub fn new(py_strategy: impl Into<Py<PyAny>>) -> Self {
+        Self {
+            py_strategy: py_strategy.into(),
+        }
+    }
+}
+
+impl DispatchStrategy for PyDispatchStrategyAdapter {
     fn next_events(
         &mut self,
         state: &SimulationSnapshot,
-        _view: &InstanceView<'_>,
+        view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
         Python::attach(|py| {
             let state_dict = snapshot_to_py_dict(py, state)
                 .expect("failed to build state dict for Python strategy");
+            let mut available_ids = HashSet::new();
+            available_ids.extend(&state.pending);
+            available_ids.extend(&state.served);
+            available_ids.extend(&state.rejected);
+
+            let view_dict = instance_view_to_py_dict(py, view, available_ids)
+                .expect("failed to build view dict for Python strategy");
             let result = self
                 .py_strategy
-                .call_method1(py, "next_events", (state_dict,))
+                .call_method1(py, "next_events", (state_dict, view_dict))
                 .expect("Python strategy.next_events() raised an exception");
             extract_py_actions(py, result).expect("failed to extract actions from Python strategy")
         })
@@ -58,16 +78,72 @@ pub struct PyCallbackAdapter {
     pub py_callback: Py<PyAny>,
 }
 
-impl RustCallback for PyCallbackAdapter {
+impl PyCallbackAdapter {
+    pub fn new(py_callback: impl Into<Py<PyAny>>) -> Self {
+        Self {
+            py_callback: py_callback.into(),
+        }
+    }
+}
+
+impl EventCallback for PyCallbackAdapter {
     fn on_action(&self, time: f32, action: &SimAction, auto: bool) {
         Python::attach(|py| {
-            let py_action = sim_action_to_py(py, action)
+            let py_action = sim_action_to_py_dict(py, action)
                 .expect("failed to convert SimAction to Python object for callback");
             self.py_callback
                 .call1(py, (time as f64, py_action, auto))
                 .expect("Python action callback raised an exception");
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// InstanceView ↔ Python dict conversion (used only by PyStrategyAdapter)
+// ---------------------------------------------------------------------------
+
+pub fn instance_view_to_py_dict(
+    py: Python,
+    view: &InstanceView,
+    available_requests: impl IntoIterator<Item = RequestId>,
+) -> PyResult<Py<PyAny>> {
+    let d = PyDict::new(py);
+
+    let requests_list = PyDict::new(py);
+    for id in available_requests {
+        let r = view
+            .get(id)
+            .expect("request ID in snapshot not found in instance view");
+        let rd = PyDict::new(py);
+        rd.set_item("id", r.id.0)?;
+        rd.set_item("position", (r.x as f64, r.y as f64))?;
+        rd.set_item("demand", r.demand as f64)?;
+        let tw = PyDict::new(py);
+        tw.set_item("earliest", r.time_window.earliest as f64)?;
+        tw.set_item("latest", r.time_window.latest as f64)?;
+        rd.set_item("time_window", tw)?;
+        rd.set_item("service_time", r.service_time as f64)?;
+        rd.set_item("release_time", r.release_time as f64)?;
+        rd.set_item("is_depot", r.is_depot)?;
+
+        requests_list.set_item(id.0, rd)?;
+    }
+    d.set_item("released_requests", requests_list)?;
+
+    let vehicles_list = PyList::empty(py);
+    for v in view.vehicle_specs() {
+        let vd = PyDict::new(py);
+        vd.set_item("id", v.id)?;
+        vd.set_item("capacity", v.capacity as f64)?;
+        vd.set_item("speed", v.speed as f64)?;
+        vehicles_list.append(vd)?;
+    }
+    d.set_item("vehicles", vehicles_list)?;
+
+    let depot_id = view.depot_id().0;
+    d.set_item("depot_id", depot_id)?;
+
+    Ok(d.into())
 }
 
 // ---------------------------------------------------------------------------
@@ -108,21 +184,6 @@ pub fn snapshot_to_py_dict(py: Python, state: &SimulationSnapshot) -> PyResult<P
     }
     d.set_item("vehicles", vehicles_list)?;
 
-    // released_requests: dict[int -> dict] with full request data.
-    // The Python _RustStrategyAdapter ignores these dict values and fetches
-    // from the Python instance, but we include them for forward compatibility
-    // and for strategies that read them directly.
-    //
-    // Note: we don't have the full Request data in the snapshot (only IDs), so
-    // we emit a minimal sentinel dict.  The _RustStrategyAdapter in rust.py
-    // uses the IDs to look up the Python Request objects from the instance.
-    let released = PyDict::new(py);
-    for rid in &state.released {
-        // Value is a placeholder int; _RustStrategyAdapter reads only the keys.
-        released.set_item(rid.0, rid.0)?;
-    }
-    d.set_item("released_requests", released)?;
-
     Ok(d.into())
 }
 
@@ -134,27 +195,24 @@ pub fn snapshot_to_py_dict(py: Python, state: &SimulationSnapshot) -> PyResult<P
 /// Rust behaviour that `_RustCallbackAdapter` handles.  Strategy actions
 /// produce the proper Python dataclass instances so callbacks receive typed
 /// objects regardless of which backend fired them.
-pub fn sim_action_to_py(py: Python, action: &SimAction) -> PyResult<Py<PyAny>> {
-    // Import the dataclass types from dvrptw.simulator.events
-    let events_mod = py.import("dvrptw.simulator.events")?;
-
+pub fn sim_action_to_py_dict(py: Python, action: &SimAction) -> PyResult<Py<PyAny>> {
+    let d = PyDict::new(py);
     match action {
         SimAction::Dispatch { vehicle_id, dest } => {
-            let cls = events_mod.getattr("DispatchEvent")?;
-            Ok(cls.call1((*vehicle_id, dest.0))?.unbind())
+            d.set_item("type", "dispatch")?;
+            d.set_item("vehicle_id", *vehicle_id)?;
+            d.set_item("destination_node", dest.0)?;
         }
         SimAction::Wait { until } => {
-            let cls = events_mod.getattr("WaitEvent")?;
-            Ok(cls.call1((*until as f64,))?.unbind())
+            d.set_item("type", "wait")?;
+            d.set_item("until_time", *until as f64)?;
         }
         SimAction::Reject { request_id } => {
-            // Use a plain dict for auto-rejects (matched by _RustCallbackAdapter);
-            // the caller sets auto=true for those.  For strategy-originated rejects
-            // we also emit a proper RejectEvent.
-            let cls = events_mod.getattr("RejectEvent")?;
-            Ok(cls.call1((request_id.0,))?.unbind())
+            d.set_item("type", "reject")?;
+            d.set_item("request_id", request_id.0)?;
         }
-    }
+    };
+    Ok(d.into())
 }
 
 /// Extract a list of [`SimAction`]s from the Python object returned by
@@ -281,4 +339,14 @@ pub fn extract_vehicle_spec(obj: &Bound<PyAny>) -> PyResult<VehicleSpec> {
         capacity: capacity as f32,
         speed: speed as f32,
     })
+}
+
+#[pyfunction]
+pub fn python_dispatch_strategy(py_strategy: Py<PyAny>) -> NativeDispatchStrategy {
+    NativeDispatchStrategy::new(PyDispatchStrategyAdapter::new(py_strategy))
+}
+
+#[pyfunction]
+pub fn python_event_callback(py_callback: Py<PyAny>) -> NativeEventCallback {
+    NativeEventCallback::new(PyCallbackAdapter::new(py_callback))
 }

@@ -4,7 +4,7 @@
 ///
 /// ```text
 /// lib.rs                ← this file: mod declarations + #[pymodule] registration
-/// types.rs              ← RequestId, SimAction, snapshots, NativeStrategyWrapper/NativeCallbackWrapper
+/// types.rs              ← RequestId, SimAction, snapshots, NativeDispatchStrategy/NativeCallbackWrapper
 /// instance.rs           ← Request, VehicleSpec, VehicleState, event queue, InstanceView, strategy traits
 /// py_bridge.rs          ← PyO3 glue: PyStrategyAdapter, PyCallbackAdapter, dict/action helpers
 /// simulator.rs          ← Simulator #[pyclass] + all impl blocks
@@ -14,7 +14,7 @@
 ///   composable.rs       ← ComposableStrategy + per-request adapters + composable_strategy()
 ///   batch.rs            ← BatchComposableStrategy + batch adapter + batch_composable_strategy()
 ///   gp_tree.rs          ← GpTree #[pyclass] + Tree/Terminal/Node + factory functions
-///   gp_strategy.rs      ← GpRoutingStrategy, GpSchedulingStrategy, gp_strategy()
+///   gp_strategy.rs      ← GpRoutingStrategy, GpSchedulingStrategy, GpBatchRoutingStrategy, gp_strategy(), gp_batch_strategy()
 /// ```
 ///
 /// # Hot path (native strategy)
@@ -40,22 +40,26 @@ pub use strategies::{
     ComposableStrategy, batch_composable_strategy, composable_strategy, greedy_strategy,
 };
 pub use strategies::{RoutingStrategy, SchedulingStrategy};
-pub use types::{NativeCallbackWrapper, NativeStrategyWrapper};
+pub use types::{NativeDispatchStrategy, NativeEventCallback};
 
 use pyo3::prelude::*;
 
 #[pymodule]
 fn rsimulator(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Simulator>()?;
-    m.add_class::<NativeStrategyWrapper>()?;
-    m.add_class::<NativeCallbackWrapper>()?;
+    m.add_class::<NativeDispatchStrategy>()?;
+    m.add_class::<NativeEventCallback>()?;
     // Built-in strategies
     m.add_function(wrap_pyfunction!(greedy_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(composable_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(batch_composable_strategy, m)?)?;
-    // GP strategy
+    // GP strategies
     m.add_class::<strategies::gp_tree::FlatGpTree>()?;
     m.add_function(wrap_pyfunction!(strategies::gp_strategy::gp_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        strategies::gp_strategy::gp_batch_strategy,
+        m
+    )?)?;
     // FlatGpTree factories
     m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_const, m)?)?;
     m.add_function(wrap_pyfunction!(strategies::gp_tree::flat_gp_add, m)?)?;
@@ -91,5 +95,7 @@ fn rsimulator(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
         strategies::gp_tree::flat_gp_release_time,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(py_bridge::python_dispatch_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(py_bridge::python_event_callback, m)?)?;
     Ok(())
 }

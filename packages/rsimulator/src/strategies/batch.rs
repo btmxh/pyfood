@@ -26,9 +26,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyList;
 
 use super::{BatchRoutingStrategy, SchedulingStrategy};
-use crate::instance::{InstanceView, RustStrategy};
+use crate::instance::{DispatchStrategy, InstanceView};
 use crate::types::{
-    NativeStrategyWrapper, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
+    NativeDispatchStrategy, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
 };
 
 use super::{build_py_instance_view, build_py_vehicles};
@@ -142,7 +142,7 @@ pub struct BatchComposableStrategy {
     pub queues: HashMap<i64, VecDeque<RequestId>>,
 }
 
-impl RustStrategy for BatchComposableStrategy {
+impl DispatchStrategy for BatchComposableStrategy {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         self.router.initialize(view);
         self.scheduler.initialize(view);
@@ -156,6 +156,10 @@ impl RustStrategy for BatchComposableStrategy {
         state: &SimulationSnapshot,
         view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
+        // Defensive init for Python adapters: ensure router/scheduler have a
+        // built instance view before being invoked.
+        self.router.initialize(view);
+        self.scheduler.initialize(view);
         let mut actions: Vec<SimAction> = Vec::new();
 
         // Phase 1: buffer newly-released, unrouted requests.
@@ -279,7 +283,7 @@ impl RustStrategy for BatchComposableStrategy {
 // Factory function
 // ---------------------------------------------------------------------------
 
-/// Return a [`NativeStrategyWrapper`] using the batch composable strategy template.
+/// Return a [`NativeDispatchStrategy`] using the batch composable strategy template.
 ///
 /// Requests are accumulated within each `slot_size`-wide time window and
 /// routed all at once when the window closes.  After assignment they enter
@@ -311,9 +315,9 @@ pub fn batch_composable_strategy(
     router: Py<PyAny>,
     scheduler: Py<PyAny>,
     slot_size: f64,
-) -> NativeStrategyWrapper {
+) -> NativeDispatchStrategy {
     let slot_size_f32 = slot_size as f32;
-    NativeStrategyWrapper {
+    NativeDispatchStrategy {
         inner: Some(Box::new(BatchComposableStrategy {
             router: Box::new(PyBatchRoutingAdapter {
                 py_router: router,

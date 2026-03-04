@@ -37,7 +37,7 @@ class TestSimulatorInstance(unittest.TestCase):
         )
         v = inst_mod.Vehicle(id=0, capacity=10.0, start_depot=0, speed=1.0)
         inst = inst_mod.DVRPTWInstance(
-            id="t1", requests=[depot, r1], vehicles=[v], depot_ids=[0]
+            id="t1", requests=[depot, r1], vehicles=[v], depot_id=0
         )
         j = inst.to_json()
         inst2 = inst_mod.DVRPTWInstance.from_json(j)
@@ -47,25 +47,11 @@ class TestSimulatorInstance(unittest.TestCase):
         mat = inst.pairwise_distance_matrix()
         self.assertEqual(mat[(0, 1)], 5.0)
 
-    def test_validate_timewindow_and_missing_depot_errors(self):
+    def test_validate_timewindow_error(self):
         # invalid time window
         tw = inst_mod.TimeWindow(10.0, 5.0)
         with self.assertRaises(ValueError):
             tw.validate()
-
-        depot = inst_mod.Request(
-            id=0,
-            position=(0, 0),
-            demand=0.0,
-            time_window=inst_mod.TimeWindow(0, 10),
-            service_time=0.0,
-            is_depot=True,
-        )
-        inst = inst_mod.DVRPTWInstance(
-            id="bad", requests=[depot], vehicles=[], depot_ids=[]
-        )
-        with self.assertRaises(ValueError):
-            inst.validate()
 
 
 if __name__ == "__main__":

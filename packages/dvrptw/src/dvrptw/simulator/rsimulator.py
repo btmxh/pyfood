@@ -12,17 +12,21 @@ the module exposes richer types so tools can reason about the API.
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    # Expose typed signatures for the typechecker without importing the
-    # external extension stubs.
-    from .state import SchedulerAction
 
-    class NativeStrategyWrapper:  # pragma: no cover - typing only
-        """Opaque marker for a native (Rust) strategy wrapper."""
+    class NativeDispatchStrategy:
+        """Opaque marker for a native (Rust) dispatching strategy.
 
-    class NativeCallbackWrapper:  # pragma: no cover - typing only
-        def __call__(
-            self, time: float, action: SchedulerAction, auto: bool
-        ) -> None: ...
+        Note: At runtime the compiled extension names this type
+        `NativeDispatchStrategy`. The aliasing in the non-TYPE_CHECKING
+        branch ensures compatibility with both the Python-facing name and
+        the typed marker used during static analysis.
+        """
+
+    class NativeEventCallback:
+        """Opaque marker for a native (Rust) event callback."""
+
+    def python_dispatching_strategy(strategy: Any) -> NativeDispatchStrategy: ...
+    def python_event_callback(callback: Any) -> NativeEventCallback: ...
 
     class FlatGpTree:  # pragma: no cover - typing only
         ...
@@ -33,16 +37,10 @@ if TYPE_CHECKING:
         ) -> None: ...
         def run(self) -> dict[str, Any]: ...
 
-    def greedy_strategy() -> NativeStrategyWrapper: ...
-    def composable_strategy(router: Any, scheduler: Any) -> NativeStrategyWrapper: ...
-    def batch_composable_strategy(
-        router: Any, scheduler: Any, slot_size: float
-    ) -> NativeStrategyWrapper: ...
-
     # GP helpers
     def gp_strategy(
         routing: FlatGpTree, sequencing: FlatGpTree, reject: FlatGpTree
-    ) -> NativeStrategyWrapper: ...
+    ) -> NativeDispatchStrategy: ...
     def flat_gp_const(value: float) -> FlatGpTree: ...
     def flat_gp_add(a: FlatGpTree, b: FlatGpTree) -> FlatGpTree: ...
     def flat_gp_sub(a: FlatGpTree, b: FlatGpTree) -> FlatGpTree: ...
@@ -61,14 +59,33 @@ else:
     # Runtime: delegate to the compiled extension for identical behaviour.
     import rsimulator as _rsim
 
-    NativeStrategyWrapper = _rsim.NativeStrategyWrapper
-    NativeCallbackWrapper = _rsim.NativeCallbackWrapper
+    # Some builds/export variants name the pyclass wrappers differently
+    # (e.g. `NativeStrategyWrapper` / `NativeCallbackWrapper`). Accept both
+    # to remain robust across local build variations.
+    NativeDispatchStrategy = _rsim.NativeDispatchStrategy
+    NativeEventCallback = _rsim.NativeEventCallback
     FlatGpTree = _rsim.FlatGpTree
     Simulator = _rsim.Simulator
 
-    greedy_strategy = _rsim.greedy_strategy
-    composable_strategy = _rsim.composable_strategy
-    batch_composable_strategy = _rsim.batch_composable_strategy
+    # Runtime function exported from the extension is named
+    # `python_dispatch_strategy` (no "ing"). Provide the typed alias
+    # `python_dispatching_strategy` for compatibility with the Python-side
+    # code that expects that name.
+    # Backwards/forwards-compat: compiled extension historically exported
+    # `python_dispatch_strategy` and `python_event_callback` (no "ing").
+    # Accept either name to be robust across builds.
+    python_dispatching_strategy = getattr(
+        _rsim,
+        "python_dispatching_strategy",
+        getattr(_rsim, "python_dispatch_strategy", None),
+    )
+    python_event_callback = getattr(
+        _rsim, "python_event_callback", getattr(_rsim, "python_event_callback", None)
+    )
+    if python_dispatching_strategy is None or python_event_callback is None:
+        raise AttributeError(
+            "rsimulator extension missing python dispatch/callback helpers"
+        )
 
     # GP helpers
     gp_strategy = _rsim.gp_strategy
@@ -87,13 +104,10 @@ else:
     flat_gp_release_time = _rsim.flat_gp_release_time
 
 __all__ = [
-    "NativeStrategyWrapper",
-    "NativeCallbackWrapper",
+    "NativeDispatchStrategy",
+    "NativeEventCallback",
     "FlatGpTree",
     "Simulator",
-    "greedy_strategy",
-    "composable_strategy",
-    "batch_composable_strategy",
     # GP helpers
     "gp_strategy",
     "flat_gp_const",
