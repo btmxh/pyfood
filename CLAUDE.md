@@ -24,23 +24,30 @@ This is a monorepo using uv workspace with two main packages:
     - `solution.py`: `Solution` dataclass
     - `evaluator.py`: `Evaluator` protocol and implementations (`WeightedSumEvaluator`, `StarNormEvaluator`, `LinearNormEvaluator`)
     - `simulator/` subpackage:
-      - `base.py`: Abstract `Simulator` class
-      - `state.py`: `SimulationState`, `VehicleState`, `DispatchStrategy` protocol, `SimulationResult`, `SimulationMetrics`
+      - `base.py`: Abstract `Simulator` class, `PythonDispatchStrategy` protocol, `PythonEventCallback`
+      - `state.py`: `SimulationSnapshot`, `VehicleSnapshot`, `InstanceView`, `StrategyView`, `VehicleSpec`, `SimulationResult`, `SimulationMetrics`
       - `events.py`: `DispatchEvent`, `WaitEvent`, `RejectEvent`, `SchedulerAction`
       - `python.py`: `PythonSimulator` (pure Python backend)
       - `rust.py`: `RustSimulator` (Rust-backed backend via rsimulator)
+      - `rsimulator.py`: Plain re-export of rsimulator extension symbols
     - `strategies/` subpackage:
       - `ilp.py`: `ILPStrategy` dispatching strategy
+      - `rust.py`: Protocols, Layer-2 adapters, and factory functions for composable Rust strategies
 
 - **`packages/rsimulator/`**: Rust performance module using PyO3/maturin
   - Python bindings to Rust code for performance-critical simulation
   - Implements:
-    - `RustSimulator` backend (same interface as Python simulator)
+    - `Simulator` backend (same interface as Python simulator)
+    - Native strategy types: `NativeDispatchStrategy`, `NativeRoutingStrategy`, `NativeSchedulingStrategy`, `NativeBatchRoutingStrategy`, `NativeEventCallback`
     - Native strategies: `greedy_strategy()`, `composable_strategy()`, `batch_composable_strategy()`
+    - Python-wrapping functions: `python_dispatch_strategy()`, `python_routing_strategy()`, `python_scheduling_strategy()`, `python_batch_routing_strategy()`, `python_event_callback()`
     - GP (Genetic Programming) API: `gp_strategy()` and expression tree builders (`flat_gp_*` functions)
   - Source files:
+    - `src/strategies/composable.rs`: `ComposableStrategy`, `PyRoutingAdapter`, `PySchedulingAdapter`
+    - `src/strategies/batch.rs`: `BatchComposableStrategy`, `PyBatchRoutingAdapter`
     - `src/strategies/gp_tree.rs`: GP tree evaluation engine
     - `src/strategies/gp_strategy.rs`: GP strategy implementation
+  - Type stubs: `rsimulator.pyi` (canonical type source for the compiled extension)
 
 The root `pyproject.toml` defines the workspace and main project dependencies.
 
@@ -48,62 +55,48 @@ The root `pyproject.toml` defines the workspace and main project dependencies.
 
 ### Setup
 ```bash
-# Enter Nix environment
+# Enter Nix environment (sets up shell with uv, cargo, etc.)
 direnv allow  # or nix develop
 
-# Create virtual environment (one-time)
-python -m venv .venv
+# Install all packages and dev dependencies
+uv sync
 
-# Activate venv
-source .venv/bin/activate
-
-# Install Python packages and dev dependencies in venv
-pip install -e .
-pip install -e packages/dvrptw
-pip install -e packages/rsimulator
+# Build the Rust extension (required once, and after any Rust changes)
+uv run maturin develop --manifest-path packages/rsimulator/Cargo.toml
 ```
 
 ### Testing
 ```bash
-# Activate venv first
-source .venv/bin/activate
-
-# Run all tests
-pytest
+uv run pytest
 
 # Run tests for specific package
-pytest packages/dvrptw/tests/
-pytest packages/rsimulator/
+uv run pytest packages/dvrptw/tests/
+uv run pytest packages/rsimulator/
 
 # Run single test file
-pytest packages/dvrptw/tests/test_simulator_instance.py
+uv run pytest packages/dvrptw/tests/test_simulator_instance.py
 
 # Run specific test
-pytest packages/dvrptw/tests/test_simulator_instance.py::TestSimulatorInstance::test_load_vrpr_csv_basic
+uv run pytest packages/dvrptw/tests/test_simulator_instance.py::TestSimulatorInstance::test_load_vrpr_csv_basic
 ```
 
 ### Building Rust Extension
 ```bash
-# Activate venv first
-source .venv/bin/activate
+uv run maturin develop --manifest-path packages/rsimulator/Cargo.toml
+```
 
-# Build rsimulator (maturin-based)
-cd packages/rsimulator
-maturin develop  # or maturin build
-
-# The Python package depends on this being built
+### Type Checking
+```bash
+uv run ty check
 ```
 
 ### Linting and Formatting
 ```bash
-# Activate venv first
-source .venv/bin/activate
-
 # Format Python code
-ruff format
+uv run ruff format
 
 # Lint Python code
-ruff check
+uv run ruff check
 
 # Format Rust code
 cargo fmt --manifest-path packages/rsimulator/Cargo.toml
@@ -194,7 +187,7 @@ result = simulator.run()  # Returns SimulationResult
 ```
 
 **How it works:**
-1. Strategy implements `DispatchStrategy.next_events(state: SimulationState) -> list[SchedulerAction]`
+1. Strategy implements `PythonDispatchStrategy.next_events(state: SimulationSnapshot, view: InstanceView) -> list[SchedulerAction]`
 2. Simulator calls strategy at each event (request arrivals, vehicle completions, wake-ups)
 3. Strategy returns actions: `DispatchEvent`, `WaitEvent`, or `RejectEvent`
 4. Simulator validates constraints and advances time accordingly
@@ -213,12 +206,15 @@ result = simulator.run()  # Returns SimulationResult
 
 ### Dispatching Strategies
 
-Strategies implement the `DispatchStrategy` protocol:
+Strategies implement the `PythonDispatchStrategy` protocol (defined in `simulator/base.py`):
 ```python
-class DispatchStrategy(Protocol):
-    def next_events(self, state: SimulationState) -> list[SchedulerAction]:
+class PythonDispatchStrategy(Protocol):
+    def next_events(self, state: SimulationSnapshot, view: InstanceView) -> list[SchedulerAction]:
         """Called when the simulator needs the next batch of actions."""
 ```
+
+**`SimulationSnapshot`** carries mutable runtime state (time, pending/served/rejected sets, vehicle snapshots).
+**`InstanceView`** carries the static instance data visible to the strategy: `released_requests`, `vehicles` (specs), `depot_id`.
 
 **Built-in strategies:**
 - `ILPStrategy(instance, evaluator=None)`: Solves full VRPTW as a Mixed-Integer Linear Program using PuLP, then replays the solution during simulation
@@ -229,7 +225,57 @@ class DispatchStrategy(Protocol):
 **Native Rust strategies:**
 - Available from `rsimulator` module (e.g., `greedy_strategy()`)
 - Run entirely in Rust with no GIL contention
-- Wrapped by RustSimulator automatically
+- Wrapped by `RustSimulator` automatically
+
+### Composable Strategies (`dvrptw.strategies.rust`)
+
+Composable strategies split dispatching into independent **routing** (request → vehicle assignment) and **scheduling** (vehicle queue ordering) sub-strategies. The architecture uses a two-layer adapter chain:
+
+- **Layer 1 (Rust → dicts)**: Built into the extension. `PyRoutingAdapter` / `PySchedulingAdapter` / `PyBatchRoutingAdapter` call Python objects with raw `dict` arguments.
+- **Layer 2 (dicts → typed)**: `NativeRoutingAdapter` / `NativeSchedulingAdapter` / `NativeBatchRoutingAdapter` in `strategies/rust.py` convert dicts into `VehicleSnapshot` and `StrategyView` before calling user code.
+
+**Typed protocols** for user implementations:
+```python
+class PythonRoutingStrategy(Protocol):
+    def route(self, request_id: int, vehicles: list[VehicleSnapshot], view: StrategyView) -> int | None: ...
+
+class PythonSchedulingStrategy(Protocol):
+    def schedule(self, vehicle: VehicleSnapshot, queue: list[int], view: StrategyView) -> int: ...
+
+class PythonBatchRoutingStrategy(Protocol):
+    def route_batch(self, requests: list[int], vehicles: list[VehicleSnapshot], view: StrategyView) -> list[tuple[int, int | None]]: ...
+```
+
+**`StrategyView`** is narrower than `InstanceView` — carries only `depot_id` and `vehicle_specs` (static instance data, no released-request map).
+
+**Factory functions** (all in `dvrptw.strategies`):
+
+| Function | Description |
+|---|---|
+| `python_routing_strategy(router)` | Wrap typed router → `NativeRoutingStrategy` |
+| `python_scheduling_strategy(scheduler)` | Wrap typed scheduler → `NativeSchedulingStrategy` |
+| `python_batch_routing_strategy(router)` | Wrap typed batch router → `NativeBatchRoutingStrategy` |
+| `composable_strategy(router, scheduler)` | Combine native router + scheduler |
+| `batch_composable_strategy(router, scheduler, slot_size)` | Slot-based batch routing variant |
+| `python_composable_strategy(router, scheduler)` | Convenience: wraps + composes in one call |
+| `python_batch_composable_strategy(router, scheduler, slot_size)` | Convenience batch variant |
+
+**Example:**
+```python
+from dvrptw.strategies import python_composable_strategy
+
+class MyRouter:
+    def route(self, request_id: int, vehicles: list[VehicleSnapshot], view: StrategyView) -> int | None:
+        return vehicles[0].vehicle_id  # assign to first vehicle
+
+class MyScheduler:
+    def schedule(self, vehicle: VehicleSnapshot, queue: list[int], view: StrategyView) -> int:
+        return min(queue)  # FIFO
+
+strategy = python_composable_strategy(MyRouter(), MyScheduler())
+simulator = RustSimulator(instance, strategy)
+result = simulator.run()
+```
 
 ### Genetic Programming (GP) Strategies (`rsimulator.gp_*`)
 
