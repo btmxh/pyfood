@@ -43,7 +43,6 @@ pub struct PyRoutingAdapter {
 impl RoutingStrategy for PyRoutingAdapter {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         Python::attach(|py| {
-            eprintln!("PyRoutingAdapter::initialize() called");
             self.py_view =
                 Some(build_py_instance_view(py, view).expect("failed to build instance view dict"));
         });
@@ -107,7 +106,6 @@ pub struct PySchedulingAdapter {
 impl SchedulingStrategy for PySchedulingAdapter {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         Python::attach(|py| {
-            eprintln!("PySchedulingAdapter::initialize() called");
             self.py_view =
                 Some(build_py_instance_view(py, view).expect("failed to build instance view dict"));
         });
@@ -176,7 +174,6 @@ pub struct ComposableStrategy {
 
 impl DispatchStrategy for ComposableStrategy {
     fn initialize(&mut self, view: &InstanceView<'_>) {
-        eprintln!("ComposableStrategy::initialize() called");
         self.router.initialize(view);
         self.scheduler.initialize(view);
         for vs in view.vehicle_specs() {
@@ -212,7 +209,27 @@ impl DispatchStrategy for ComposableStrategy {
 
         for rid in new_requests {
             self.routed.insert(rid);
-            match self.router.route(rid, &state.vehicles, view, state.time) {
+
+            // Build an augmented vehicles snapshot that accounts for already-
+            // queued (but not yet dispatched) requests. We clone the
+            // SimulationSnapshot's vehicle slices and add the sum of queued
+            // demands to each vehicle's `current_load`. This lets routers
+            // (notably the GP router) score vehicles while considering pending
+            // assignments without mutating the shared `state` object.
+            let mut aug_vehicles: Vec<VehicleSnapshot> = state.vehicles.clone();
+            for v in aug_vehicles.iter_mut() {
+                if let Some(queue) = self.queues.get(&v.vehicle_id) {
+                    let mut extra_load: f32 = 0.0;
+                    for &qrid in queue.iter() {
+                        if let Some(req) = view.get(qrid) {
+                            extra_load += req.demand;
+                        }
+                    }
+                    v.current_load += extra_load;
+                }
+            }
+
+            match self.router.route(rid, &aug_vehicles, view, state.time) {
                 Some(vehicle_id) => {
                     self.queues.entry(vehicle_id).or_default().push_back(rid);
                 }

@@ -156,9 +156,7 @@ impl Simulator {
             vehicles: &vehicle_specs,
             depot_id,
         };
-        eprintln!("Simulator::new: calling strategy.initialize()");
         strategy.initialize(&init_view);
-        eprintln!("Simulator::new: strategy.initialize() returned");
 
         let action_callback = action_callback
             .map(|cb| cb.extract::<PyRefMut<NativeEventCallback>>())
@@ -198,13 +196,11 @@ impl Simulator {
         // the simulator's instance data. Some callers construct the native
         // strategy externally and rely on the simulator to invoke
         // `initialize` before the first `next_events` call.
-        eprintln!("Simulator::run: calling strategy.initialize()");
         self.strategy.initialize(&InstanceView {
             requests: &self.requests,
             vehicles: &self.vehicle_specs,
             depot_id: self.depot_id,
         });
-        eprintln!("Simulator::run: strategy.initialize() returned");
 
         loop {
             let any_busy = self.vehicles.iter().any(|v| v.available_at > self.time);

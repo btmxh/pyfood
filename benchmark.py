@@ -52,7 +52,13 @@ from dvrptw.simulator.events import (
 )
 from dvrptw.simulator.state import SimulationSnapshot, InstanceView
 from dvrptw import PythonSimulator, RustSimulator, ILPStrategy, StarNormEvaluator
-from rsimulator import greedy_strategy
+from rsimulator import greedy_strategy, gp_strategy
+from rsimulator import (
+    flat_gp_sub,
+    flat_gp_const,
+    flat_gp_travel_time,
+    flat_gp_time_until_due,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +370,66 @@ def run_benchmark() -> list[RunResult]:
                 wall_time_s=elapsed,
             )
         )
+
+    # --- GP3 ---
+    # Simple 3-tree GP rule (native Rust GP strategy)
+    # - routing: prefer lower travel time (negated travel_time)
+    # - sequencing: prefer urgent requests (negated time_until_due)
+    # - reject: never auto-reject (constant 0)
+    print()
+    print("=" * 60)
+    print("Running GP3 (causal, native Rust GP strategy)...")
+    print("=" * 60)
+    t0 = time.perf_counter()
+    routing = flat_gp_sub(flat_gp_const(0.0), flat_gp_travel_time())
+    sequencing = flat_gp_sub(flat_gp_const(0.0), flat_gp_time_until_due())
+    # Reject assignments that are provably time-window infeasible.
+    # If travel_time > time_until_due then arrival > latest and the request
+    # cannot be served by this vehicle at the current time.  The reject tree
+    # below evaluates to (travel_time - time_until_due) which is >0 when
+    # infeasible; the GP routing logic rejects when reject_score > routing_score.
+    reject = flat_gp_sub(flat_gp_travel_time(), flat_gp_time_until_due())
+    gp_native = gp_strategy(routing, sequencing, reject)
+    sim = RustSimulator(instance, gp_native)
+    elapsed = None
+    try:
+        result = sim.run()
+        elapsed = time.perf_counter() - t0
+        print(
+            f"  (weight-agnostic)  rejected={result.metrics.rejected}/{n_customers}"
+            f"  cost={result.metrics.total_travel_cost:.2f}  time={elapsed:.3f}s"
+        )
+        for w in weights:
+            results.append(
+                RunResult(
+                    strategy_name="GP3",
+                    weight=w,
+                    rejected=result.metrics.rejected,
+                    total_requests=n_customers,
+                    travel_cost=result.metrics.total_travel_cost,
+                    wall_time_s=elapsed,
+                )
+            )
+    except Exception as exc:
+        # The GP strategy may produce infeasible dispatches; handle gracefully
+        elapsed = time.perf_counter() - t0
+        print(f"  GP3 simulation failed: {exc!s}")
+        penalty_cost = float(1e9)
+        rejected = n_customers
+        print(
+            f"  (penalised)  rejected={rejected}/{n_customers}  cost={penalty_cost:.2f}  time={elapsed:.3f}s"
+        )
+        for w in weights:
+            results.append(
+                RunResult(
+                    strategy_name="GP3",
+                    weight=w,
+                    rejected=rejected,
+                    total_requests=n_customers,
+                    travel_cost=penalty_cost,
+                    wall_time_s=elapsed,
+                )
+            )
 
     return results
 
