@@ -234,11 +234,76 @@ impl DispatchStrategy for ComposableStrategy {
             if vehicle.available_at > state.time {
                 continue;
             }
+            // get mutable queue for this vehicle
             let queue = match self.queues.get_mut(&vid) {
                 Some(q) if !q.is_empty() => q,
                 _ => continue,
             };
 
+            // Phase 2a: filter out infeasible requests from the queue BEFORE
+            // calling the scheduler. A request is infeasible if, when dispatched
+            // now from the vehicle's current position, its service_start would
+            // exceed its time-window latest, or if it would violate capacity.
+            let mut retained_queue: VecDeque<RequestId> = VecDeque::new();
+            let mut infeasible: Vec<RequestId> = Vec::new();
+            for &rid in queue.iter() {
+                if let Some(req) = view.get(rid) {
+                    // find vehicle spec for this vehicle id
+                    let (speed, capacity) = view
+                        .vehicle_specs()
+                        .iter()
+                        .find(|vs| vs.id == vehicle.vehicle_id)
+                        .map(|vs| (vs.speed, vs.capacity))
+                        .unwrap_or((1.0_f32, f32::INFINITY));
+
+                    // from position -> request distance
+                    if let Some(from_req) = view.get(vehicle.position) {
+                        let dx = from_req.x - req.x;
+                        let dy = from_req.y - req.y;
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let travel_time = if speed == 0.0 {
+                            f32::INFINITY
+                        } else {
+                            dist / speed
+                        };
+                        let arrival = state.time + travel_time;
+                        let service_start = arrival.max(req.time_window.earliest);
+
+                        let capacity_ok = if req.is_depot {
+                            true
+                        } else {
+                            vehicle.current_load + req.demand <= capacity
+                        };
+
+                        if service_start > req.time_window.latest || !capacity_ok {
+                            infeasible.push(rid);
+                        } else {
+                            retained_queue.push_back(rid);
+                        }
+                    } else {
+                        // missing from-position info → be defensive and mark infeasible
+                        infeasible.push(rid);
+                    }
+                } else {
+                    // request not found in view (shouldn't happen) — mark infeasible
+                    infeasible.push(rid);
+                }
+            }
+
+            // Replace the queue with only the retained (feasible) requests
+            *queue = retained_queue;
+
+            // Emit Reject actions for infeasible assignments
+            for rid in infeasible.iter() {
+                actions.push(SimAction::Reject { request_id: *rid });
+            }
+
+            // If nothing feasible remains, continue
+            if queue.is_empty() {
+                continue;
+            }
+
+            // Ask scheduler to pick one request from the remaining feasible queue
             let queue_slice: Vec<RequestId> = queue.iter().copied().collect();
             let chosen = self
                 .scheduler
