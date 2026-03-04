@@ -50,7 +50,7 @@ from dvrptw.simulator.events import (
     WaitEvent,
     SchedulerAction,
 )
-from dvrptw.simulator.state import SimulationState
+from dvrptw.simulator.state import SimulationSnapshot, InstanceView
 from dvrptw import PythonSimulator, RustSimulator, ILPStrategy, StarNormEvaluator
 from rsimulator import greedy_strategy
 
@@ -106,7 +106,7 @@ def build_trimmed_instance(n_static: int = 8, n_dynamic: int = 7) -> DVRPTWInsta
         requests=[depot] + new_requests,
         vehicles=full.vehicles,
         planning_horizon=full.planning_horizon,
-        depot_ids=[depot.id],
+        depot_id=depot.id,
     )
 
 
@@ -149,17 +149,17 @@ class NearestFeasibleNeighborStrategy:
         ]
         self._max_dist: float = max(dist_vals) if dist_vals else 1.0
 
-    def next_events(self, state: SimulationState) -> list[SchedulerAction]:
+    def next_events(
+        self, state: SimulationSnapshot, view: InstanceView
+    ) -> list[SchedulerAction]:
         actions: list[SchedulerAction] = []
         now = state.time
 
-        if not state.pending_requests:
+        if not state.pending:
             return []
 
         # Released and still pending requests at this moment
-        available: set[int] = (
-            set(state.released_requests.keys()) & state.pending_requests
-        )
+        available: set[int] = set(view.released_requests.keys()) & state.pending
 
         idle_vehicles = [v for v in state.vehicles if v.available_at <= now]
         assigned_this_round: set[int] = set()
@@ -228,7 +228,7 @@ class NearestFeasibleNeighborStrategy:
             if busy_times:
                 candidates.append(min(busy_times))
             # Next request release
-            for rid in state.pending_requests - set(state.released_requests.keys()):
+            for rid in state.pending - set(view.released_requests.keys()):
                 req = self._req_by_id.get(rid)
                 if req and req.release_time > now:
                     candidates.append(req.release_time)

@@ -6,7 +6,7 @@ from .rsimulator import (
     Simulator as _RustSimulator,
     NativeDispatchStrategy,
     NativeEventCallback,
-    python_dispatching_strategy,
+    python_dispatch_strategy,
     python_event_callback,
 )
 
@@ -45,7 +45,7 @@ class RustSimulator(Simulator):
     @classmethod
     @override
     def wrap_strategy(cls, strategy: PythonDispatchStrategy) -> NativeDispatchStrategy:
-        return python_dispatching_strategy(NativeStrategyAdapter(strategy))
+        return python_dispatch_strategy(NativeStrategyAdapter(strategy))
 
     @classmethod
     @override

@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use pyo3::prelude::*;
 
-use super::{RoutingStrategy, SchedulingStrategy};
+use super::{NativeRoutingStrategy, NativeSchedulingStrategy, RoutingStrategy, SchedulingStrategy};
 use crate::instance::{DispatchStrategy, InstanceView};
 use crate::types::{
     NativeDispatchStrategy, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
@@ -283,31 +283,77 @@ impl DispatchStrategy for ComposableStrategy {
 }
 
 // ---------------------------------------------------------------------------
-// Factory function
+// Factory functions
 // ---------------------------------------------------------------------------
+
+/// Wrap a Python object as a [`NativeRoutingStrategy`].
+///
+/// The Python object must implement the dict-based routing protocol:
+/// ```python
+/// def route(self, request_id: int, vehicles: list[dict], instance_view: dict) -> int | None:
+///     ...
+/// ```
+/// In practice, pass a Python-side adapter (e.g. `NativeRoutingAdapter`) that
+/// converts these dicts into typed dataclasses before calling user code.
+#[pyfunction]
+pub fn python_routing_strategy(py_router: Py<PyAny>) -> NativeRoutingStrategy {
+    NativeRoutingStrategy {
+        inner: Some(Box::new(PyRoutingAdapter {
+            py_router,
+            py_view: None,
+        })),
+    }
+}
+
+/// Wrap a Python object as a [`NativeSchedulingStrategy`].
+///
+/// The Python object must implement the dict-based scheduling protocol:
+/// ```python
+/// def schedule(self, vehicle: dict, queue: list[int], instance_view: dict) -> int:
+///     ...
+/// ```
+/// In practice, pass a Python-side adapter (e.g. `NativeSchedulingAdapter`) that
+/// converts these dicts into typed dataclasses before calling user code.
+#[pyfunction]
+pub fn python_scheduling_strategy(py_scheduler: Py<PyAny>) -> NativeSchedulingStrategy {
+    NativeSchedulingStrategy {
+        inner: Some(Box::new(PySchedulingAdapter {
+            py_scheduler,
+            py_view: None,
+        })),
+    }
+}
 
 /// Return a [`NativeDispatchStrategy`] using the composable strategy template.
 ///
-/// `router` and `scheduler` are Python objects implementing the corresponding
-/// protocols (see [`PyRoutingAdapter`] and [`PySchedulingAdapter`] for the
-/// expected method signatures).
+/// Both `router` and `scheduler` must be [`NativeRoutingStrategy`] /
+/// [`NativeSchedulingStrategy`] instances.  Use [`python_routing_strategy`] and
+/// [`python_scheduling_strategy`] to wrap Python objects:
 ///
 /// ```python
-/// strategy = composable_strategy(MyRouter(), MyScheduler())
+/// from rsimulator import composable_strategy, python_routing_strategy, python_scheduling_strategy
+///
+/// strategy = composable_strategy(
+///     python_routing_strategy(MyRouter()),
+///     python_scheduling_strategy(MyScheduler()),
+/// )
 /// sim = Simulator(instance, strategy)
 /// ```
 #[pyfunction]
-pub fn composable_strategy(router: Py<PyAny>, scheduler: Py<PyAny>) -> NativeDispatchStrategy {
+pub fn composable_strategy(
+    router: &mut NativeRoutingStrategy,
+    scheduler: &mut NativeSchedulingStrategy,
+) -> NativeDispatchStrategy {
     NativeDispatchStrategy {
         inner: Some(Box::new(ComposableStrategy {
-            router: Box::new(PyRoutingAdapter {
-                py_router: router,
-                py_view: None,
-            }),
-            scheduler: Box::new(PySchedulingAdapter {
-                py_scheduler: scheduler,
-                py_view: None,
-            }),
+            router: router
+                .inner
+                .take()
+                .expect("NativeRoutingStrategy already consumed"),
+            scheduler: scheduler
+                .inner
+                .take()
+                .expect("NativeSchedulingStrategy already consumed"),
             queues: HashMap::new(),
             routed: HashSet::new(),
         })),

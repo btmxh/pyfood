@@ -17,3 +17,6 @@ dev = ["pytest>=9.0.2", "ruff>=0.15.4", "maturin>=1.12,<2.0"]
 
 [tool.setuptools]
 packages = []
+
+[tool.ty.environment]
+root = ["packages/dvrptw", "packages/rsimulator", "packages/gp"]

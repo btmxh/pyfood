@@ -3,7 +3,8 @@
 from typing import Callable, Protocol
 from abc import ABC, abstractmethod
 from ..instance import DVRPTWInstance
-from .state import SimulationResult, SchedulerAction, SimulationSnapshot, InstanceView
+from .state import SimulationResult, SimulationSnapshot, InstanceView
+from .events import SchedulerAction
 
 PythonEventCallback = Callable[[float, SchedulerAction, bool], None] | None
 

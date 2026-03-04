@@ -37,7 +37,9 @@ pub mod types;
 
 pub use simulator::Simulator;
 pub use strategies::{
-    ComposableStrategy, batch_composable_strategy, composable_strategy, greedy_strategy,
+    ComposableStrategy, NativeBatchRoutingStrategy, NativeRoutingStrategy,
+    NativeSchedulingStrategy, batch_composable_strategy, composable_strategy, greedy_strategy,
+    python_batch_routing_strategy, python_routing_strategy, python_scheduling_strategy,
 };
 pub use strategies::{RoutingStrategy, SchedulingStrategy};
 pub use types::{NativeDispatchStrategy, NativeEventCallback};
@@ -49,10 +51,16 @@ fn rsimulator(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Simulator>()?;
     m.add_class::<NativeDispatchStrategy>()?;
     m.add_class::<NativeEventCallback>()?;
+    m.add_class::<NativeRoutingStrategy>()?;
+    m.add_class::<NativeSchedulingStrategy>()?;
+    m.add_class::<NativeBatchRoutingStrategy>()?;
     // Built-in strategies
     m.add_function(wrap_pyfunction!(greedy_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(composable_strategy, m)?)?;
     m.add_function(wrap_pyfunction!(batch_composable_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(python_routing_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(python_scheduling_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(python_batch_routing_strategy, m)?)?;
     // GP strategies
     m.add_class::<strategies::gp_tree::FlatGpTree>()?;
     m.add_function(wrap_pyfunction!(strategies::gp_strategy::gp_strategy, m)?)?;

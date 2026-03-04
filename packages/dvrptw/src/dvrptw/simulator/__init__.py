@@ -8,6 +8,7 @@ from .state import (
     VehicleSnapshot,
     VehicleSpec,
     InstanceView,
+    StrategyView,
 )
 from .base import Simulator, PythonDispatchStrategy, PythonEventCallback
 from .python import PythonSimulator
@@ -15,6 +16,14 @@ from .rust import (
     RustSimulator,
     NativeDispatchStrategy,
     NativeEventCallback,
+    python_dispatch_strategy,
+    python_event_callback,
+)
+from .rsimulator import (
+    NativeRoutingStrategy,
+    NativeSchedulingStrategy,
+    python_routing_strategy,
+    python_scheduling_strategy,
 )
 from . import rsimulator
 
@@ -33,6 +42,11 @@ __all__ = [
     "VehicleSnapshot",
     "VehicleSpec",
     "InstanceView",
+    "StrategyView",
+    "NativeRoutingStrategy",
+    "NativeSchedulingStrategy",
+    "python_routing_strategy",
+    "python_scheduling_strategy",
     "Simulator",
     "PythonSimulator",
     "RustSimulator",
@@ -40,10 +54,6 @@ __all__ = [
     "NativeEventCallback",
     "greedy_strategy",
     "rsimulator",
+    "python_dispatch_strategy",
+    "python_event_callback",
 ]
-
-# Backwards-compatible aliases: older code/tests expect `SimulationState`
-# and `VehicleState` names. Provide simple aliases to the newer
-# `SimulationSnapshot`/`VehicleSnapshot` dataclasses.
-VehicleState = VehicleSnapshot
-SimulationState = SimulationSnapshot

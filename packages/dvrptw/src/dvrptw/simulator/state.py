@@ -44,6 +44,18 @@ class InstanceView:
 
 
 @dataclass
+class StrategyView:
+    """Instance view passed to composable sub-strategies (routing/scheduling).
+
+    Narrower than :class:`InstanceView` — only carries static instance data
+    (depot identity and vehicle specs), not the full released-request map.
+    """
+
+    depot_id: int
+    vehicle_specs: list[VehicleSpec]
+
+
+@dataclass
 class SimulationMetrics:
     """Performance metrics from simulation."""
 

@@ -1,17 +1,29 @@
 """Type stubs for the rsimulator Rust extension."""
 
-from typing import Any
+from typing import Any, Callable
 
 class FlatGpTree:
     """Opaque wrapper around a Rust GP tree used for GP-based strategies."""
 
-    ...
+    ops: bytes
+    def to_bytes(self) -> bytes: ...
+    @staticmethod
+    def from_bytes(data: bytes) -> "FlatGpTree": ...
 
 class NativeDispatchStrategy:
     """Opaque wrapper around a native Rust dispatch strategy."""
 
 class NativeEventCallback:
     """Opaque wrapper around a native Rust action callback."""
+
+class NativeRoutingStrategy:
+    """Opaque wrapper around a native Rust routing sub-strategy."""
+
+class NativeSchedulingStrategy:
+    """Opaque wrapper around a native Rust scheduling sub-strategy."""
+
+class NativeBatchRoutingStrategy:
+    """Opaque wrapper around a native Rust batch routing sub-strategy."""
 
 class Simulator:
     """Rust-backed DVRPTW simulator."""
@@ -25,10 +37,26 @@ class Simulator:
     def run(self) -> dict[str, Any]: ...
 
 def greedy_strategy() -> NativeDispatchStrategy: ...
-def composable_strategy(router: Any, scheduler: Any) -> NativeDispatchStrategy: ...
-def batch_composable_strategy(
-    router: Any, scheduler: Any, slot_size: float
+def composable_strategy(
+    router: NativeRoutingStrategy, scheduler: NativeSchedulingStrategy
 ) -> NativeDispatchStrategy: ...
+def batch_composable_strategy(
+    router: NativeBatchRoutingStrategy,
+    scheduler: NativeSchedulingStrategy,
+    slot_size: float,
+) -> NativeDispatchStrategy: ...
+def python_routing_strategy(router: object) -> NativeRoutingStrategy: ...
+def python_scheduling_strategy(scheduler: object) -> NativeSchedulingStrategy: ...
+def python_batch_routing_strategy(router: object) -> NativeBatchRoutingStrategy: ...
+
+RawEvent = dict[str, object]
+TypelessPythonEventCallback = Callable[[float, RawEvent, bool], None]
+
+def python_dispatch_strategy(strategy: object) -> NativeDispatchStrategy: ...
+def python_event_callback(
+    callback: TypelessPythonEventCallback,
+) -> NativeEventCallback: ...
+
 
 # GP strategy helpers (exported from the Rust extension). Tests and the
 # Python code expect these names to exist; keep them typed as `Any` to

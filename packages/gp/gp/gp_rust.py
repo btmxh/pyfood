@@ -18,18 +18,46 @@ operate on the compact opcode bytes exposed by `FlatGpTree.ops`.
 from __future__ import annotations
 
 import random
-from typing import Callable, List, Sequence, Tuple
+from typing import Callable
 
 import rsimulator as rs
-from dvrptw.simulator import RustSimulator
-from dvrptw.evaluator import Evaluator, StarNormEvaluator
-from dvrptw.instance import DVRPTWInstance
+from dvrptw import RustSimulator, DVRPTWInstance, Evaluator, StarNormEvaluator
 
 from .evolve import make_full, make_grow
-from .engine import splice, random_subtree_range
 
 
-Individual = Tuple[rs.FlatGpTree, rs.FlatGpTree, rs.FlatGpTree]
+def subtree_start(ops: bytes, end: int) -> int:
+    """Find the start index of the subtree whose last token index is `end`.
+
+    Mirrors `FlatTree::subtree_start` scanning algorithm.
+    """
+    needed = 1
+    i = end
+    while i >= 0:
+        b = ops[i]
+        if (b & 0xC0) != 0xC0:  # leaf
+            needed -= 1
+        else:
+            needed += 1
+        if needed == 0:
+            return i
+        i -= 1
+    return 0
+
+
+def random_subtree_range(ops: bytes) -> tuple[int, int]:
+    if not ops:
+        return (0, -1)
+    end = random.randrange(len(ops))
+    start = subtree_start(ops, end)
+    return (start, end)
+
+
+def splice(ops: bytes, a_start: int, a_end: int, replacement: bytes) -> bytes:
+    return ops[:a_start] + replacement + ops[a_end + 1 :]
+
+
+Individual = tuple[rs.FlatGpTree, rs.FlatGpTree, rs.FlatGpTree]
 
 
 def make_individual(depth: int) -> Individual:
@@ -42,7 +70,7 @@ def make_individual(depth: int) -> Individual:
     return (mk(depth), mk(depth), mk(depth))
 
 
-def init_population(pop_size: int, max_depth: int) -> List[Individual]:
+def init_population(pop_size: int, max_depth: int) -> list[Individual]:
     return [make_individual(1 + (i % max_depth)) for i in range(pop_size)]
 
 
@@ -83,7 +111,7 @@ def mutate_individual(
 def evaluate_individual(
     individual: Individual,
     instance: DVRPTWInstance,
-) -> Tuple[float, int]:
+) -> tuple[float, int]:
     """Run the Rust simulator using the GP native strategy and return raw objectives.
 
     Returns (total_travel_cost, rejected_count).
@@ -114,7 +142,7 @@ def run_gp_rust(
     elitism: int = 1,
     evaluator: Evaluator | None = None,
     make_tree_fn: Callable[[int], rs.FlatGpTree] | None = None,
-) -> Tuple[Individual, Tuple[float, int]]:
+) -> tuple[Individual, tuple[float, int], list[dict]]:
     """Evolve GP trees where fitness is a DVRPTW simulation result.
 
     Returns the best individual and its raw objectives (travel_cost, rejected).
@@ -135,16 +163,16 @@ def run_gp_rust(
 
     best_ind: Individual = pop[0]
     best_scalar = float("inf")
-    best_obj: Tuple[float, int] = (float("inf"), 10**9)
+    best_obj: tuple[float, int] = (float("inf"), 10**9)
 
-    history: List[dict] = []
+    history: list[dict] = []
 
     for gen in range(generations):
         # evaluate population sequentially (could be parallelised later)
-        raw_objs: List[Tuple[float, int]] = [
+        raw_objs: list[tuple[float, int]] = [
             evaluate_individual(ind, instance) for ind in pop
         ]
-        scalars: List[float] = [evaluator.scalar(o[0], o[1]) for o in raw_objs]
+        scalars: list[float] = [evaluator.scalar(o[0], o[1]) for o in raw_objs]
 
         # update best
         for ind, s, o in zip(pop, scalars, raw_objs):
@@ -155,7 +183,7 @@ def run_gp_rust(
 
         # create next generation
         ranked = sorted(range(len(pop)), key=lambda i: scalars[i])
-        new_pop: List[Individual] = [pop[i] for i in ranked[:elitism]]
+        new_pop: list[Individual] = [pop[i] for i in ranked[:elitism]]
 
         # record generation statistics
         mean_scalar = sum(scalars) / len(scalars)
@@ -192,7 +220,7 @@ def run_gp_rust(
 
 
 def tournament_select_by_scalar(
-    pop: Sequence[Individual], scalars: Sequence[float], k: int
+    pop: list[Individual], scalars: list[float], k: int
 ) -> Individual:
     idxs = random.sample(range(len(pop)), k)
     best = idxs[0]

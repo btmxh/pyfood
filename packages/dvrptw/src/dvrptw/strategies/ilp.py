@@ -53,15 +53,17 @@ import shutil
 
 import pulp
 
-from dvrptw.instance import DVRPTWInstance, Request
-from dvrptw.evaluator import Evaluator, StarNormEvaluator
-from dvrptw.simulator.events import (
+from ..instance import DVRPTWInstance, Request
+from ..evaluator import Evaluator, StarNormEvaluator
+from ..simulator import (
     DispatchEvent,
     RejectEvent,
     WaitEvent,
     SchedulerAction,
+    SimulationSnapshot,
+    InstanceView,
+    PythonDispatchStrategy,
 )
-from dvrptw.simulator.state import SimulationSnapshot, InstanceView
 
 log = logging.getLogger(__name__)
 
@@ -360,7 +362,7 @@ def _solve_vrptw(
 # ---------------------------------------------------------------------------
 
 
-class ILPStrategy:
+class ILPStrategy(PythonDispatchStrategy):
     """VRPTW ILP strategy that solves ahead-of-time and replays during simulation.
 
     Since an exact ILP requires the full instance to be known up front, this
@@ -427,9 +429,10 @@ class ILPStrategy:
     # ------------------------------------------------------------------
 
     def next_events(
-        self, state: SimulationSnapshot, instance_view: InstanceView
+        self, state: SimulationSnapshot, view: InstanceView
     ) -> list[SchedulerAction]:
         actions: list[SchedulerAction] = []
+        instance_view = view
 
         # Reject any pending request that the ILP plan does not serve
         planned_requests: set[int] = {

@@ -25,7 +25,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
-use super::{BatchRoutingStrategy, SchedulingStrategy};
+use super::{
+    BatchRoutingStrategy, NativeBatchRoutingStrategy, NativeSchedulingStrategy, SchedulingStrategy,
+};
 use crate::instance::{DispatchStrategy, InstanceView};
 use crate::types::{
     NativeDispatchStrategy, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
@@ -280,16 +282,12 @@ impl DispatchStrategy for BatchComposableStrategy {
 }
 
 // ---------------------------------------------------------------------------
-// Factory function
+// Factory functions
 // ---------------------------------------------------------------------------
 
-/// Return a [`NativeDispatchStrategy`] using the batch composable strategy template.
+/// Wrap a Python object as a [`NativeBatchRoutingStrategy`].
 ///
-/// Requests are accumulated within each `slot_size`-wide time window and
-/// routed all at once when the window closes.  After assignment they enter
-/// per-vehicle queues; `scheduler` picks the dispatch order.
-///
-/// `router` must implement:
+/// The Python object must implement the dict-based batch routing protocol:
 /// ```python
 /// def route_batch(
 ///     self,
@@ -297,36 +295,56 @@ impl DispatchStrategy for BatchComposableStrategy {
 ///     vehicles: list[dict],
 ///     instance_view: dict,
 /// ) -> list[tuple[int, int | None]]:
-///     ...  # return one (request_id, vehicle_id | None) per input request
+///     ...
 /// ```
+/// In practice, pass a Python-side adapter (e.g. `NativeBatchRoutingAdapter`) that
+/// converts these dicts into typed dataclasses before calling user code.
+#[pyfunction]
+pub fn python_batch_routing_strategy(py_router: Py<PyAny>) -> NativeBatchRoutingStrategy {
+    NativeBatchRoutingStrategy {
+        inner: Some(Box::new(PyBatchRoutingAdapter {
+            py_router,
+            py_view: None,
+        })),
+    }
+}
+
+/// Return a [`NativeDispatchStrategy`] using the batch composable strategy template.
 ///
-/// `scheduler` must implement:
+/// Both `router` and `scheduler` must be [`NativeBatchRoutingStrategy`] /
+/// [`NativeSchedulingStrategy`] instances.  Use [`python_batch_routing_strategy`]
+/// and [`python_scheduling_strategy`] to wrap Python objects:
+///
 /// ```python
-/// def schedule(
-///     self,
-///     vehicle: dict,
-///     queue: list[int],
-///     instance_view: dict,
-/// ) -> int:
-///     ...  # return a request_id from queue
+/// from rsimulator import (
+///     batch_composable_strategy,
+///     python_batch_routing_strategy,
+///     python_scheduling_strategy,
+/// )
+///
+/// strategy = batch_composable_strategy(
+///     python_batch_routing_strategy(MyBatchRouter()),
+///     python_scheduling_strategy(MyScheduler()),
+///     slot_size=10.0,
+/// )
 /// ```
 #[pyfunction]
 pub fn batch_composable_strategy(
-    router: Py<PyAny>,
-    scheduler: Py<PyAny>,
+    router: &mut NativeBatchRoutingStrategy,
+    scheduler: &mut NativeSchedulingStrategy,
     slot_size: f64,
 ) -> NativeDispatchStrategy {
     let slot_size_f32 = slot_size as f32;
     NativeDispatchStrategy {
         inner: Some(Box::new(BatchComposableStrategy {
-            router: Box::new(PyBatchRoutingAdapter {
-                py_router: router,
-                py_view: None,
-            }),
-            scheduler: Box::new(crate::strategies::composable::PySchedulingAdapter {
-                py_scheduler: scheduler,
-                py_view: None,
-            }),
+            router: router
+                .inner
+                .take()
+                .expect("NativeBatchRoutingStrategy already consumed"),
+            scheduler: scheduler
+                .inner
+                .take()
+                .expect("NativeSchedulingStrategy already consumed"),
             slot_size: slot_size_f32,
             next_slot_end: slot_size_f32,
             buffer: Vec::new(),
