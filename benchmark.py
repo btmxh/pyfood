@@ -52,9 +52,8 @@ from dvrptw.simulator.events import (
 )
 from dvrptw.simulator.state import SimulationSnapshot, InstanceView
 from dvrptw import PythonSimulator, RustSimulator, ILPStrategy, StarNormEvaluator
-from rsimulator import greedy_strategy, gp_strategy
+from rsimulator import greedy_strategy, gp_strategy, flat_gp_current_load
 from rsimulator import (
-    flat_gp_sub,
     flat_gp_const,
     flat_gp_travel_time,
     flat_gp_time_until_due,
@@ -67,8 +66,8 @@ from rsimulator import (
 
 CSV_PATH = "packages/dvrptw/tests/data/h100rc101.csv"
 TRUCK_SPEED = 1.0
-TRUCK_CAPACITY = 200.0
-NUM_TRUCKS = 5
+TRUCK_CAPACITY = 1300.0
+NUM_TRUCKS = 10
 
 
 def build_trimmed_instance(n_static: int = 8, n_dynamic: int = 7) -> DVRPTWInstance:
@@ -381,20 +380,40 @@ def run_benchmark() -> list[RunResult]:
     print("Running GP3 (causal, native Rust GP strategy)...")
     print("=" * 60)
     t0 = time.perf_counter()
-    routing = flat_gp_sub(flat_gp_const(0.0), flat_gp_travel_time())
-    sequencing = flat_gp_sub(flat_gp_const(0.0), flat_gp_time_until_due())
+    routing = -(flat_gp_travel_time() + flat_gp_current_load())
+    sequencing = -flat_gp_time_until_due()
     # Reject assignments that are provably time-window infeasible.
     # If travel_time > time_until_due then arrival > latest and the request
     # cannot be served by this vehicle at the current time.  The reject tree
     # below evaluates to (travel_time - time_until_due) which is >0 when
     # infeasible; the GP routing logic rejects when reject_score > routing_score.
-    reject = flat_gp_sub(flat_gp_travel_time(), flat_gp_time_until_due())
+    reject = routing - flat_gp_const(1)
     gp_native = gp_strategy(routing, sequencing, reject)
     sim = RustSimulator(instance, gp_native)
     elapsed = None
     try:
+        # Run simulation normally. Previously we redirected stderr to capture
+        # Rust `eprintln!` debug lines; those have been removed so no redirection
+        # is necessary.
         result = sim.run()
         elapsed = time.perf_counter() - t0
+
+        # Print detailed assignment info: final routes and per-request assignment
+        print("\nGP3 Detailed Result:\n")
+        for vid, route in enumerate(result.solution.routes):
+            print(
+                f" Vehicle {vid}: route={route} service_times={result.solution.service_times[vid]}"
+            )
+        # build request -> vehicle map
+        req_map = {}
+        for vid, route in enumerate(result.solution.routes):
+            for req in route:
+                req_map[req] = vid
+        print("\n Request -> assigned vehicle mapping:")
+        for c in customers:
+            rid = c.id
+            assigned = req_map.get(rid, None)
+            print(f"  req {rid:2d}: assigned_vehicle={assigned}")
         print(
             f"  (weight-agnostic)  rejected={result.metrics.rejected}/{n_customers}"
             f"  cost={result.metrics.total_travel_cost:.2f}  time={elapsed:.3f}s"

@@ -27,8 +27,10 @@ def main() -> None:
     args = p.parse_args()
 
     print("Loading instance:", args.instance)
+    # Updated defaults: higher capacity and more vehicles to reflect correct
+    # experimental setup.
     instance = load_vrpr_csv(
-        args.instance, truck_speed=1.0, truck_capacity=30.0, num_trucks=2
+        args.instance, truck_speed=1.0, truck_capacity=1300.0, num_trucks=10
     )
     print("Instance loaded: requests=", len(instance.requests))
 
