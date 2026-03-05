@@ -2,11 +2,12 @@
 name = "pyfood"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["rsimulator", "dvrptw", "tqdm", "pulp>=3.3.0"]
+dependencies = ["rsimulator", "dvrptw", "gp", "tqdm", "pulp>=3.3.0"]
 
 [tool.uv.sources]
 rsimulator = { workspace = true }
 dvrptw = { workspace = true }
+gp = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -16,3 +17,6 @@ dev = ["pytest>=9.0.2", "ruff>=0.15.4", "maturin>=1.12,<2.0"]
 
 [tool.setuptools]
 packages = []
+
+[tool.ty.environment]
+root = ["packages/dvrptw", "packages/rsimulator", "packages/gp"]

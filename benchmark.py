@@ -50,9 +50,14 @@ from dvrptw.simulator.events import (
     WaitEvent,
     SchedulerAction,
 )
-from dvrptw.simulator.state import SimulationState
+from dvrptw.simulator.state import SimulationSnapshot, InstanceView
 from dvrptw import PythonSimulator, RustSimulator, ILPStrategy, StarNormEvaluator
-from rsimulator import greedy_strategy
+from rsimulator import greedy_strategy, gp_strategy, flat_gp_current_load
+from rsimulator import (
+    flat_gp_const,
+    flat_gp_travel_time,
+    flat_gp_time_until_due,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -61,8 +66,8 @@ from rsimulator import greedy_strategy
 
 CSV_PATH = "packages/dvrptw/tests/data/h100rc101.csv"
 TRUCK_SPEED = 1.0
-TRUCK_CAPACITY = 200.0
-NUM_TRUCKS = 5
+TRUCK_CAPACITY = 1300.0
+NUM_TRUCKS = 10
 
 
 def build_trimmed_instance(n_static: int = 8, n_dynamic: int = 7) -> DVRPTWInstance:
@@ -106,7 +111,7 @@ def build_trimmed_instance(n_static: int = 8, n_dynamic: int = 7) -> DVRPTWInsta
         requests=[depot] + new_requests,
         vehicles=full.vehicles,
         planning_horizon=full.planning_horizon,
-        depot_ids=[depot.id],
+        depot_id=depot.id,
     )
 
 
@@ -149,17 +154,17 @@ class NearestFeasibleNeighborStrategy:
         ]
         self._max_dist: float = max(dist_vals) if dist_vals else 1.0
 
-    def next_events(self, state: SimulationState) -> list[SchedulerAction]:
+    def next_events(
+        self, state: SimulationSnapshot, view: InstanceView
+    ) -> list[SchedulerAction]:
         actions: list[SchedulerAction] = []
         now = state.time
 
-        if not state.pending_requests:
+        if not state.pending:
             return []
 
         # Released and still pending requests at this moment
-        available: set[int] = (
-            set(state.released_requests.keys()) & state.pending_requests
-        )
+        available: set[int] = set(view.released_requests.keys()) & state.pending
 
         idle_vehicles = [v for v in state.vehicles if v.available_at <= now]
         assigned_this_round: set[int] = set()
@@ -228,7 +233,7 @@ class NearestFeasibleNeighborStrategy:
             if busy_times:
                 candidates.append(min(busy_times))
             # Next request release
-            for rid in state.pending_requests - set(state.released_requests.keys()):
+            for rid in state.pending - set(view.released_requests.keys()):
                 req = self._req_by_id.get(rid)
                 if req and req.release_time > now:
                     candidates.append(req.release_time)
@@ -364,6 +369,86 @@ def run_benchmark() -> list[RunResult]:
                 wall_time_s=elapsed,
             )
         )
+
+    # --- GP3 ---
+    # Simple 3-tree GP rule (native Rust GP strategy)
+    # - routing: prefer lower travel time (negated travel_time)
+    # - sequencing: prefer urgent requests (negated time_until_due)
+    # - reject: never auto-reject (constant 0)
+    print()
+    print("=" * 60)
+    print("Running GP3 (causal, native Rust GP strategy)...")
+    print("=" * 60)
+    t0 = time.perf_counter()
+    routing = -(flat_gp_travel_time() + flat_gp_current_load())
+    sequencing = -flat_gp_time_until_due()
+    # Reject assignments that are provably time-window infeasible.
+    # If travel_time > time_until_due then arrival > latest and the request
+    # cannot be served by this vehicle at the current time.  The reject tree
+    # below evaluates to (travel_time - time_until_due) which is >0 when
+    # infeasible; the GP routing logic rejects when reject_score > routing_score.
+    reject = routing - flat_gp_const(1)
+    gp_native = gp_strategy(routing, sequencing, reject)
+    sim = RustSimulator(instance, gp_native)
+    elapsed = None
+    try:
+        # Run simulation normally. Previously we redirected stderr to capture
+        # Rust `eprintln!` debug lines; those have been removed so no redirection
+        # is necessary.
+        result = sim.run()
+        elapsed = time.perf_counter() - t0
+
+        # Print detailed assignment info: final routes and per-request assignment
+        print("\nGP3 Detailed Result:\n")
+        for vid, route in enumerate(result.solution.routes):
+            print(
+                f" Vehicle {vid}: route={route} service_times={result.solution.service_times[vid]}"
+            )
+        # build request -> vehicle map
+        req_map = {}
+        for vid, route in enumerate(result.solution.routes):
+            for req in route:
+                req_map[req] = vid
+        print("\n Request -> assigned vehicle mapping:")
+        for c in customers:
+            rid = c.id
+            assigned = req_map.get(rid, None)
+            print(f"  req {rid:2d}: assigned_vehicle={assigned}")
+        print(
+            f"  (weight-agnostic)  rejected={result.metrics.rejected}/{n_customers}"
+            f"  cost={result.metrics.total_travel_cost:.2f}  time={elapsed:.3f}s"
+        )
+        for w in weights:
+            results.append(
+                RunResult(
+                    strategy_name="GP3",
+                    weight=w,
+                    rejected=result.metrics.rejected,
+                    total_requests=n_customers,
+                    travel_cost=result.metrics.total_travel_cost,
+                    wall_time_s=elapsed,
+                )
+            )
+    except Exception as exc:
+        # The GP strategy may produce infeasible dispatches; handle gracefully
+        elapsed = time.perf_counter() - t0
+        print(f"  GP3 simulation failed: {exc!s}")
+        penalty_cost = float(1e9)
+        rejected = n_customers
+        print(
+            f"  (penalised)  rejected={rejected}/{n_customers}  cost={penalty_cost:.2f}  time={elapsed:.3f}s"
+        )
+        for w in weights:
+            results.append(
+                RunResult(
+                    strategy_name="GP3",
+                    weight=w,
+                    rejected=rejected,
+                    total_requests=n_customers,
+                    travel_cost=penalty_cost,
+                    wall_time_s=elapsed,
+                )
+            )
 
     return results
 

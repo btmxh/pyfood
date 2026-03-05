@@ -2,7 +2,7 @@
 ///
 /// # Architecture
 ///
-/// The hot path is fully Rust-native when a [`NativeStrategyWrapper`] is used:
+/// The hot path is fully Rust-native when a [`NativeDispatchStrategy`] is used:
 ///
 /// ```text
 /// Simulator::run()
@@ -21,13 +21,11 @@ use pyo3::types::{PyDict, PyList};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::instance::{
-    Event, EventKind, InstanceView, MinEvent, RustCallback, RustStrategy, VehicleState,
+    DispatchStrategy, Event, EventCallback, EventKind, InstanceView, MinEvent, VehicleState,
 };
-use crate::py_bridge::{
-    PyCallbackAdapter, PyStrategyAdapter, extract_request, extract_vehicle_spec,
-};
+use crate::py_bridge::{extract_request, extract_vehicle_spec};
 use crate::types::{
-    NativeCallbackWrapper, NativeStrategyWrapper, RequestId, SimAction, SimulationSnapshot,
+    NativeDispatchStrategy, NativeEventCallback, RequestId, SimAction, SimulationSnapshot,
     VehicleSnapshot,
 };
 
@@ -59,8 +57,8 @@ pub struct Simulator {
     // Strategy and callback — both behind trait objects.
     // Native implementations run with no GIL; Python ones acquire it inside
     // PyStrategyAdapter / PyCallbackAdapter.
-    strategy: Box<dyn RustStrategy>,
-    action_callback: Option<Box<dyn RustCallback>>,
+    strategy: Box<dyn DispatchStrategy>,
+    action_callback: Option<Box<dyn EventCallback>>,
 }
 
 #[pymethods]
@@ -69,7 +67,7 @@ impl Simulator {
     ///
     /// Args:
     ///     instance: DVRPTWInstance Python object
-    ///     strategy: either a [`NativeStrategyWrapper`] (zero-overhead, no GIL)
+    ///     strategy: either a [`NativeDispatchStrategy`] (zero-overhead, no GIL)
     ///               or any Python object implementing `next_events(state) -> list`
     ///     action_callback: optional callable `(time, action, auto) -> None`
     ///                      or a [`NativeCallbackWrapper`]
@@ -78,12 +76,9 @@ impl Simulator {
     pub fn new(
         _py: Python,
         instance: &Bound<PyAny>,
-        strategy: &Bound<PyAny>,
-        action_callback: Option<&Bound<PyAny>>,
+        strategy: &Bound<NativeDispatchStrategy>,
+        action_callback: Option<&Bound<NativeEventCallback>>,
     ) -> PyResult<Self> {
-        // Validate instance first (mirrors Python Simulator.__init__)
-        instance.call_method0("validate")?;
-
         // Extract requests
         let py_requests = instance.getattr("requests")?;
         let py_requests_list = py_requests.cast::<PyList>()?;
@@ -102,9 +97,7 @@ impl Simulator {
         }
 
         // Depot id
-        let py_depot_ids = instance.getattr("depot_ids")?;
-        let py_depot_ids_list = py_depot_ids.cast::<PyList>()?;
-        let depot_id = RequestId(py_depot_ids_list.get_item(0)?.extract::<i64>()?);
+        let depot_id = RequestId(instance.getattr("depot_id")?.extract::<i64>()?);
 
         // Initialise vehicle runtime state (all start at depot, idle at t=0)
         let vehicles: Vec<VehicleState> = vehicle_specs
@@ -145,45 +138,37 @@ impl Simulator {
             }
         }
 
-        // Resolve strategy: native wrapper (no-GIL) or Python object (GIL adapter)
-        let mut strategy_box: Box<dyn RustStrategy> =
-            if let Ok(mut wrapper) = strategy.extract::<PyRefMut<NativeStrategyWrapper>>() {
-                wrapper.inner.take().ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(
-                        "NativeStrategyWrapper has already been consumed",
-                    )
-                })?
-            } else {
-                Box::new(PyStrategyAdapter {
-                    py_strategy: strategy.clone().unbind(),
-                })
-            };
+        let mut strategy = strategy
+            .extract::<PyRefMut<NativeDispatchStrategy>>()?
+            .inner
+            .take()
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "NativeDispatchStrategy has already been consumed",
+                )
+            })?;
 
-        // Give native strategies access to instance data (no-op for Python adapters).
-        strategy_box.initialize(&InstanceView {
+        // Call the strategy initializer so native strategies (and adapters)
+        // can cache instance data before the simulation loop starts.
+        // This mirrors the documented DispatchStrategy::initialize hook.
+        let init_view = InstanceView {
             requests: &requests,
             vehicles: &vehicle_specs,
             depot_id,
-        });
-
-        // Resolve callback: native wrapper or Python callable
-        let callback_box: Option<Box<dyn RustCallback>> = match action_callback {
-            None => None,
-            Some(cb) => {
-                if let Ok(mut wrapper) = cb.extract::<PyRefMut<NativeCallbackWrapper>>() {
-                    Some(wrapper.inner.take().ok_or_else(|| {
-                        pyo3::exceptions::PyValueError::new_err(
-                            "NativeCallbackWrapper has already been consumed",
-                        )
-                    })?)
-                } else {
-                    Some(Box::new(PyCallbackAdapter {
-                        py_callback: cb.clone().unbind(),
-                    }))
-                }
-            }
         };
+        strategy.initialize(&init_view);
 
+        let action_callback = action_callback
+            .map(|cb| cb.extract::<PyRefMut<NativeEventCallback>>())
+            .transpose()?
+            .map(|mut wrapper| {
+                wrapper.inner.take().ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "NativeCallbackWrapper has already been consumed",
+                    )
+                })
+            })
+            .transpose()?;
         Ok(Simulator {
             requests,
             vehicle_specs,
@@ -196,8 +181,8 @@ impl Simulator {
             rejected_requests: HashSet::new(),
             being_served: HashSet::new(),
             event_queue,
-            strategy: strategy_box,
-            action_callback: callback_box,
+            strategy,
+            action_callback,
         })
     }
 
@@ -207,6 +192,16 @@ impl Simulator {
     ///     "metrics":  {"total_travel_cost": float, "rejected": int}
     ///   }
     pub fn run(&mut self, py: Python) -> PyResult<Py<PyAny>> {
+        // Ensure the strategy has been initialised with a view that references
+        // the simulator's instance data. Some callers construct the native
+        // strategy externally and rely on the simulator to invoke
+        // `initialize` before the first `next_events` call.
+        self.strategy.initialize(&InstanceView {
+            requests: &self.requests,
+            vehicles: &self.vehicle_specs,
+            depot_id: self.depot_id,
+        });
+
         loop {
             let any_busy = self.vehicles.iter().any(|v| v.available_at > self.time);
             if self.event_queue.is_empty() && !any_busy {

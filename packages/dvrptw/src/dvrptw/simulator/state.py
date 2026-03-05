@@ -1,15 +1,13 @@
 """Simulation state types, metrics, results, and the strategy protocol."""
 
 from dataclasses import dataclass, field
-from typing import Protocol
 
-from .events import SchedulerAction
 from ..instance import Request
 from ..solution import Solution
 
 
 @dataclass
-class VehicleState:
+class VehicleSnapshot:
     """Current state of a single vehicle."""
 
     vehicle_id: int
@@ -21,26 +19,40 @@ class VehicleState:
 
 
 @dataclass
-class SimulationState:
-    """Current state of the simulation (strategy only sees released requests)."""
-
+class SimulationSnapshot:
     time: float
-    pending_requests: set[int]  # request IDs not yet rejected/completed
-    served_requests: set[int]  # request IDs that have been served
-    rejected_requests: set[int]  # request IDs that have been rejected
-    vehicles: list[VehicleState]
-    released_requests: dict[int, Request]  # release_time <= time, non-depot
+    pending: set[int]
+    served: set[int]
+    rejected: set[int]
+    vehicles: list[VehicleSnapshot]
 
 
-class DispatchingStrategy(Protocol):
-    """Protocol for dispatching strategy implementations."""
+@dataclass
+class VehicleSpec:
+    """Static information about a vehicle from the instance."""
 
-    def next_events(self, state: SimulationState) -> list[SchedulerAction]:
-        """Called when simulator needs next actions from strategy.
+    id: int
+    capacity: float
+    speed: float
 
-        Returns a list of DispatchEvent, WaitEvent, or RejectEvent.
-        """
-        ...
+
+@dataclass
+class InstanceView:
+    released_requests: dict[int, Request]
+    vehicles: list[VehicleSpec]
+    depot_id: int
+
+
+@dataclass
+class StrategyView:
+    """Instance view passed to composable sub-strategies (routing/scheduling).
+
+    Narrower than :class:`InstanceView` — only carries static instance data
+    (depot identity and vehicle specs), not the full released-request map.
+    """
+
+    depot_id: int
+    vehicle_specs: list[VehicleSpec]
 
 
 @dataclass

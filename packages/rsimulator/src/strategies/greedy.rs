@@ -5,9 +5,9 @@
 /// test suite.
 use pyo3::prelude::*;
 
-use crate::instance::{InstanceView, Request, RustStrategy};
+use crate::instance::{DispatchStrategy, InstanceView, Request};
 use crate::types::{
-    NativeStrategyWrapper, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
+    NativeDispatchStrategy, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
 };
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ struct GreedyRustStrategy {
     speed: f32,
 }
 
-impl RustStrategy for GreedyRustStrategy {
+impl DispatchStrategy for GreedyRustStrategy {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         self.depot = view.get(view.depot_id()).cloned();
         self.speed = view
@@ -109,14 +109,14 @@ impl RustStrategy for GreedyRustStrategy {
 // Factory function
 // ---------------------------------------------------------------------------
 
-/// Return a [`NativeStrategyWrapper`] containing the built-in greedy strategy.
+/// Return a [`NativeDispatchStrategy`] containing the built-in greedy strategy.
 ///
 /// Dispatches idle vehicles to pending requests in ascending request-ID order.
 /// Infeasible requests (vehicle cannot arrive before the window closes) are
 /// skipped; the simulator auto-rejects them when their window expires.
 #[pyfunction]
-pub fn greedy_strategy() -> NativeStrategyWrapper {
-    NativeStrategyWrapper {
+pub fn greedy_strategy() -> NativeDispatchStrategy {
+    NativeDispatchStrategy {
         inner: Some(Box::new(GreedyRustStrategy {
             depot: None,
             speed: 1.0_f32,

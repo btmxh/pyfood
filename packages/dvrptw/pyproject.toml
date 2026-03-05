@@ -2,4 +2,4 @@
 name = "dvrptw"
 version = "0.1.0"
 readme = "README.md"
-dependencies = ["rsimulator"]
+dependencies = ["rsimulator", "pulp>=3.3.0"]

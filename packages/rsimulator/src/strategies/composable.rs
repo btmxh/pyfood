@@ -9,10 +9,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use pyo3::prelude::*;
 
-use super::{RoutingStrategy, SchedulingStrategy};
-use crate::instance::{InstanceView, RustStrategy};
+use super::{NativeRoutingStrategy, NativeSchedulingStrategy, RoutingStrategy, SchedulingStrategy};
+use crate::instance::{DispatchStrategy, InstanceView};
 use crate::types::{
-    NativeStrategyWrapper, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
+    NativeDispatchStrategy, RequestId, SimAction, SimulationSnapshot, VehicleSnapshot,
 };
 
 use super::{build_py_instance_view, build_py_vehicle, build_py_vehicles};
@@ -58,11 +58,13 @@ impl RoutingStrategy for PyRoutingAdapter {
         Python::attach(|py| {
             let py_vehicles =
                 build_py_vehicles(py, vehicles).expect("failed to build vehicles list");
-            let py_view = self
-                .py_view
-                .as_ref()
-                .expect("initialize() must be called before route()")
-                .clone_ref(py);
+            // Build instance view on-demand if initialize() wasn't called.
+            if self.py_view.is_none() {
+                let built =
+                    build_py_instance_view(py, _view).expect("failed to build instance view dict");
+                self.py_view = Some(built);
+            }
+            let py_view = self.py_view.as_ref().unwrap().clone_ref(py);
             let result = self
                 .py_router
                 .call_method1(py, "route", (request.0, py_vehicles, py_view))
@@ -119,11 +121,13 @@ impl SchedulingStrategy for PySchedulingAdapter {
         Python::attach(|py| {
             let py_vehicle = build_py_vehicle(py, vehicle).expect("failed to build vehicle dict");
             let py_queue: Vec<i64> = queue.iter().map(|r| r.0).collect();
-            let py_view = self
-                .py_view
-                .as_ref()
-                .expect("initialize() must be called before schedule()")
-                .clone_ref(py);
+            // Build instance view on-demand if initialize() wasn't called.
+            if self.py_view.is_none() {
+                let built =
+                    build_py_instance_view(py, _view).expect("failed to build instance view dict");
+                self.py_view = Some(built);
+            }
+            let py_view = self.py_view.as_ref().unwrap().clone_ref(py);
             let result = self
                 .py_scheduler
                 .call_method1(py, "schedule", (py_vehicle, py_queue, py_view))
@@ -168,7 +172,7 @@ pub struct ComposableStrategy {
     pub routed: HashSet<RequestId>,
 }
 
-impl RustStrategy for ComposableStrategy {
+impl DispatchStrategy for ComposableStrategy {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         self.router.initialize(view);
         self.scheduler.initialize(view);
@@ -182,6 +186,12 @@ impl RustStrategy for ComposableStrategy {
         state: &SimulationSnapshot,
         view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
+        // Defensive: ensure sub-strategies have been initialized. Some
+        // call-sites may not invoke `initialize` on the boxed trait object
+        // before the first `next_events` call; calling it here is idempotent
+        // and cheap for Python adapters (rebuilds their cached `py_view`).
+        self.router.initialize(view);
+        self.scheduler.initialize(view);
         let mut actions: Vec<SimAction> = Vec::new();
 
         // Phase 1: route newly-released requests (exactly once per request).
@@ -199,7 +209,27 @@ impl RustStrategy for ComposableStrategy {
 
         for rid in new_requests {
             self.routed.insert(rid);
-            match self.router.route(rid, &state.vehicles, view, state.time) {
+
+            // Build an augmented vehicles snapshot that accounts for already-
+            // queued (but not yet dispatched) requests. We clone the
+            // SimulationSnapshot's vehicle slices and add the sum of queued
+            // demands to each vehicle's `current_load`. This lets routers
+            // (notably the GP router) score vehicles while considering pending
+            // assignments without mutating the shared `state` object.
+            let mut aug_vehicles: Vec<VehicleSnapshot> = state.vehicles.clone();
+            for v in aug_vehicles.iter_mut() {
+                if let Some(queue) = self.queues.get(&v.vehicle_id) {
+                    let mut extra_load: f32 = 0.0;
+                    for &qrid in queue.iter() {
+                        if let Some(req) = view.get(qrid) {
+                            extra_load += req.demand;
+                        }
+                    }
+                    v.current_load += extra_load;
+                }
+            }
+
+            match self.router.route(rid, &aug_vehicles, view, state.time) {
                 Some(vehicle_id) => {
                     self.queues.entry(vehicle_id).or_default().push_back(rid);
                 }
@@ -221,11 +251,76 @@ impl RustStrategy for ComposableStrategy {
             if vehicle.available_at > state.time {
                 continue;
             }
+            // get mutable queue for this vehicle
             let queue = match self.queues.get_mut(&vid) {
                 Some(q) if !q.is_empty() => q,
                 _ => continue,
             };
 
+            // Phase 2a: filter out infeasible requests from the queue BEFORE
+            // calling the scheduler. A request is infeasible if, when dispatched
+            // now from the vehicle's current position, its service_start would
+            // exceed its time-window latest, or if it would violate capacity.
+            let mut retained_queue: VecDeque<RequestId> = VecDeque::new();
+            let mut infeasible: Vec<RequestId> = Vec::new();
+            for &rid in queue.iter() {
+                if let Some(req) = view.get(rid) {
+                    // find vehicle spec for this vehicle id
+                    let (speed, capacity) = view
+                        .vehicle_specs()
+                        .iter()
+                        .find(|vs| vs.id == vehicle.vehicle_id)
+                        .map(|vs| (vs.speed, vs.capacity))
+                        .unwrap_or((1.0_f32, f32::INFINITY));
+
+                    // from position -> request distance
+                    if let Some(from_req) = view.get(vehicle.position) {
+                        let dx = from_req.x - req.x;
+                        let dy = from_req.y - req.y;
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let travel_time = if speed == 0.0 {
+                            f32::INFINITY
+                        } else {
+                            dist / speed
+                        };
+                        let arrival = state.time + travel_time;
+                        let service_start = arrival.max(req.time_window.earliest);
+
+                        let capacity_ok = if req.is_depot {
+                            true
+                        } else {
+                            vehicle.current_load + req.demand <= capacity
+                        };
+
+                        if service_start > req.time_window.latest || !capacity_ok {
+                            infeasible.push(rid);
+                        } else {
+                            retained_queue.push_back(rid);
+                        }
+                    } else {
+                        // missing from-position info → be defensive and mark infeasible
+                        infeasible.push(rid);
+                    }
+                } else {
+                    // request not found in view (shouldn't happen) — mark infeasible
+                    infeasible.push(rid);
+                }
+            }
+
+            // Replace the queue with only the retained (feasible) requests
+            *queue = retained_queue;
+
+            // Emit Reject actions for infeasible assignments
+            for rid in infeasible.iter() {
+                actions.push(SimAction::Reject { request_id: *rid });
+            }
+
+            // If nothing feasible remains, continue
+            if queue.is_empty() {
+                continue;
+            }
+
+            // Ask scheduler to pick one request from the remaining feasible queue
             let queue_slice: Vec<RequestId> = queue.iter().copied().collect();
             let chosen = self
                 .scheduler
@@ -270,31 +365,77 @@ impl RustStrategy for ComposableStrategy {
 }
 
 // ---------------------------------------------------------------------------
-// Factory function
+// Factory functions
 // ---------------------------------------------------------------------------
 
-/// Return a [`NativeStrategyWrapper`] using the composable strategy template.
+/// Wrap a Python object as a [`NativeRoutingStrategy`].
 ///
-/// `router` and `scheduler` are Python objects implementing the corresponding
-/// protocols (see [`PyRoutingAdapter`] and [`PySchedulingAdapter`] for the
-/// expected method signatures).
+/// The Python object must implement the dict-based routing protocol:
+/// ```python
+/// def route(self, request_id: int, vehicles: list[dict], instance_view: dict) -> int | None:
+///     ...
+/// ```
+/// In practice, pass a Python-side adapter (e.g. `NativeRoutingAdapter`) that
+/// converts these dicts into typed dataclasses before calling user code.
+#[pyfunction]
+pub fn python_routing_strategy(py_router: Py<PyAny>) -> NativeRoutingStrategy {
+    NativeRoutingStrategy {
+        inner: Some(Box::new(PyRoutingAdapter {
+            py_router,
+            py_view: None,
+        })),
+    }
+}
+
+/// Wrap a Python object as a [`NativeSchedulingStrategy`].
+///
+/// The Python object must implement the dict-based scheduling protocol:
+/// ```python
+/// def schedule(self, vehicle: dict, queue: list[int], instance_view: dict) -> int:
+///     ...
+/// ```
+/// In practice, pass a Python-side adapter (e.g. `NativeSchedulingAdapter`) that
+/// converts these dicts into typed dataclasses before calling user code.
+#[pyfunction]
+pub fn python_scheduling_strategy(py_scheduler: Py<PyAny>) -> NativeSchedulingStrategy {
+    NativeSchedulingStrategy {
+        inner: Some(Box::new(PySchedulingAdapter {
+            py_scheduler,
+            py_view: None,
+        })),
+    }
+}
+
+/// Return a [`NativeDispatchStrategy`] using the composable strategy template.
+///
+/// Both `router` and `scheduler` must be [`NativeRoutingStrategy`] /
+/// [`NativeSchedulingStrategy`] instances.  Use [`python_routing_strategy`] and
+/// [`python_scheduling_strategy`] to wrap Python objects:
 ///
 /// ```python
-/// strategy = composable_strategy(MyRouter(), MyScheduler())
+/// from rsimulator import composable_strategy, python_routing_strategy, python_scheduling_strategy
+///
+/// strategy = composable_strategy(
+///     python_routing_strategy(MyRouter()),
+///     python_scheduling_strategy(MyScheduler()),
+/// )
 /// sim = Simulator(instance, strategy)
 /// ```
 #[pyfunction]
-pub fn composable_strategy(router: Py<PyAny>, scheduler: Py<PyAny>) -> NativeStrategyWrapper {
-    NativeStrategyWrapper {
+pub fn composable_strategy(
+    router: &mut NativeRoutingStrategy,
+    scheduler: &mut NativeSchedulingStrategy,
+) -> NativeDispatchStrategy {
+    NativeDispatchStrategy {
         inner: Some(Box::new(ComposableStrategy {
-            router: Box::new(PyRoutingAdapter {
-                py_router: router,
-                py_view: None,
-            }),
-            scheduler: Box::new(PySchedulingAdapter {
-                py_scheduler: scheduler,
-                py_view: None,
-            }),
+            router: router
+                .inner
+                .take()
+                .expect("NativeRoutingStrategy already consumed"),
+            scheduler: scheduler
+                .inner
+                .take()
+                .expect("NativeSchedulingStrategy already consumed"),
             queues: HashMap::new(),
             routed: HashSet::new(),
         })),

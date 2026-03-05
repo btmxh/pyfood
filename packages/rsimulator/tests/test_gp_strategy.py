@@ -1,7 +1,7 @@
 """Tests for GP strategy via rsimulator: FlatGpTree, factory functions, and gp_strategy().
 
 Covers:
-- gp_strategy() returns NativeStrategyWrapper
+- gp_strategy() returns NativeDispatchStrategy
 - Const trees: accept-all and reject-all behaviour
 - Routing tree selects best vehicle (prefer closer via negative travel time)
 - Sequencing tree controls dispatch order (serve most urgent first)
@@ -50,7 +50,7 @@ def _make_single_request_instance() -> DVRPTWInstance:
         requests=[depot, req],
         vehicles=[v],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -86,7 +86,7 @@ def _make_basic_instance() -> DVRPTWInstance:
         requests=[depot, req1, req2],
         vehicles=[v],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -122,7 +122,7 @@ def _make_two_vehicle_instance() -> DVRPTWInstance:
         requests=[depot, req],
         vehicles=vehicles,
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -163,7 +163,7 @@ def _make_urgency_instance() -> DVRPTWInstance:
         requests=[depot, req1, req2],
         vehicles=[v],
         planning_horizon=500.0,
-        depot_ids=[0],
+        depot_id=0,
     )
 
 
@@ -173,16 +173,16 @@ def _make_urgency_instance() -> DVRPTWInstance:
 
 
 class TestGpStrategyReturnType(unittest.TestCase):
-    """gp_strategy() must return a NativeStrategyWrapper."""
+    """gp_strategy() must return a NativeDispatchStrategy."""
 
     def test_returns_native_wrapper(self):
-        from rsimulator import flat_gp_const, gp_strategy, NativeStrategyWrapper
+        from rsimulator import flat_gp_const, gp_strategy, NativeDispatchStrategy
 
         routing = flat_gp_const(1.0)
         sequencing = flat_gp_const(1.0)
         reject = flat_gp_const(0.0)
         s = gp_strategy(routing, sequencing, reject)
-        self.assertIsInstance(s, NativeStrategyWrapper)
+        self.assertIsInstance(s, NativeDispatchStrategy)
 
 
 class TestGpStrategyAcceptAll(unittest.TestCase):

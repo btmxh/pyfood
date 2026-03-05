@@ -5,7 +5,7 @@
 /// - [`SimAction`]             — zero-allocation action enum
 /// - [`VehicleSnapshot`]       — per-vehicle snapshot slice
 /// - [`SimulationSnapshot`]    — lightweight state passed to strategies
-/// - [`NativeStrategyWrapper`] — `#[pyclass]` box around `Box<dyn RustStrategy>`
+/// - [`NativeDispatchStrategy`] — `#[pyclass]` box around `Box<dyn RustStrategy>`
 /// - [`NativeCallbackWrapper`] — `#[pyclass]` box around `Box<dyn RustCallback>`
 ///
 /// The [`RustStrategy`], [`RustCallback`], and [`InstanceView`] traits/types
@@ -78,14 +78,14 @@ pub struct SimulationSnapshot {
 }
 
 // ---------------------------------------------------------------------------
-// NativeStrategyWrapper — #[pyclass] box around Box<dyn RustStrategy>
+// NativeDispatchStrategy — #[pyclass] box around Box<dyn RustStrategy>
 // ---------------------------------------------------------------------------
 
 /// A Python-visible wrapper around a native [`RustStrategy`] implementation.
 ///
 /// Construct instances using the factory functions exposed by this module
 /// (e.g. [`greedy_strategy`]).  Pass them directly to `Simulator.__init__`
-/// instead of a Python `DispatchingStrategy` object to bypass all GIL
+/// instead of a Python `DispatchStrategy` object to bypass all GIL
 /// overhead during simulation.
 ///
 /// ```python
@@ -95,12 +95,28 @@ pub struct SimulationSnapshot {
 /// result = sim.run()
 /// ```
 #[pyclass]
-pub struct NativeStrategyWrapper {
-    pub inner: Option<Box<dyn crate::instance::RustStrategy>>,
+pub struct NativeDispatchStrategy {
+    pub inner: Option<Box<dyn crate::instance::DispatchStrategy>>,
+}
+
+impl NativeDispatchStrategy {
+    pub fn new(trait_obj: impl crate::instance::DispatchStrategy + 'static) -> Self {
+        Self {
+            inner: Some(Box::new(trait_obj)),
+        }
+    }
 }
 
 /// A Python-visible wrapper around a native [`RustCallback`] implementation.
 #[pyclass]
-pub struct NativeCallbackWrapper {
-    pub inner: Option<Box<dyn crate::instance::RustCallback>>,
+pub struct NativeEventCallback {
+    pub inner: Option<Box<dyn crate::instance::EventCallback>>,
+}
+
+impl NativeEventCallback {
+    pub fn new(trait_obj: impl crate::instance::EventCallback + 'static) -> Self {
+        Self {
+            inner: Some(Box::new(trait_obj)),
+        }
+    }
 }

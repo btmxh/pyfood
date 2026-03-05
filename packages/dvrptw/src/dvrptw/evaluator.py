@@ -24,6 +24,7 @@ invariant with respect to the weight magnitudes.
 """
 
 from __future__ import annotations
+from dvrptw import DVRPTWInstance
 
 from typing import Protocol, runtime_checkable
 
@@ -239,7 +240,7 @@ class StarNormEvaluator:
     def from_instance(
         w1: float,
         w2: float,
-        instance: "DVRPTWInstance",  # type: ignore[name-defined]  # noqa: F821
+        instance: DVRPTWInstance,
     ) -> "StarNormEvaluator":
         """Construct directly from a ``DVRPTWInstance``, computing bounds automatically."""
         depot = next(r for r in instance.requests if r.is_depot)

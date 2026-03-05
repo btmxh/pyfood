@@ -66,7 +66,7 @@ DispatchEvent.
 The user strategy must implement:
 
 ```
-class DispatchingStrategy(Protocol):
+class DispatchStrategy(Protocol):
     def next_events(self, state: SimulationState) -> list[SchedulerAction]:
         """
         Called at each event where the strategy is eligible to act:

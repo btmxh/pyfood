@@ -156,7 +156,7 @@ impl<'a> InstanceView<'a> {
 
 /// A dispatching strategy implemented entirely in Rust.
 ///
-/// Implementing this trait instead of the Python-side `DispatchingStrategy`
+/// Implementing this trait instead of the Python-side `DispatchStrategy`
 /// protocol eliminates all GIL acquisitions and PyO3 serialisation overhead
 /// from the simulation hot path.
 ///
@@ -170,7 +170,7 @@ impl<'a> InstanceView<'a> {
 ///     }
 /// }
 /// ```
-pub trait RustStrategy: Send + Sync {
+pub trait DispatchStrategy: Send + Sync {
     /// Called once by the simulator after instance data is parsed, before the
     /// simulation loop starts.  Override to cache instance data (e.g. request
     /// time windows, vehicle speed) for use in [`next_events`].
@@ -193,6 +193,6 @@ pub trait RustStrategy: Send + Sync {
 ///
 /// Called once per action (strategy-originated or auto-reject) with the
 /// current simulation time, the action, and whether it was automatic.
-pub trait RustCallback: Send + Sync {
+pub trait EventCallback: Send + Sync {
     fn on_action(&self, time: f32, action: &SimAction, auto: bool);
 }

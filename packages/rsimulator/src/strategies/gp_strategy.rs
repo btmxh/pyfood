@@ -1,27 +1,74 @@
 /// gp_strategy.rs — GP-tree-driven routing and scheduling strategies.
 ///
-/// Implements [`RoutingStrategy`] and [`SchedulingStrategy`] using GP expression
-/// trees, combined via [`ComposableStrategy`].  Exposed to Python via [`gp_strategy`].
-use std::collections::HashMap;
+/// Implements [`RoutingStrategy`], [`SchedulingStrategy`], and
+/// [`BatchRoutingStrategy`] using GP expression trees, combined via
+/// [`ComposableStrategy`] / [`BatchComposableStrategy`].
+///
+/// # Role contexts
+///
+/// Each of the three tree roles has its own [`RoleContext`] implementor:
+///
+/// | Role               | Context type      | Used by                             |
+/// |--------------------|-------------------|-------------------------------------|
+/// | Vehicle assignment | [`RoutingCtx`]    | [`GpRoutingStrategy`], [`GpBatchRoutingStrategy`] |
+/// | Queue ordering     | [`SequencingCtx`] | [`GpSchedulingStrategy`]            |
+/// | Request rejection  | [`RejectCtx`]     | [`GpRoutingStrategy`], [`GpBatchRoutingStrategy`] |
+///
+/// All three currently expose the same 8 terminals (IDs 0–7) but are defined
+/// independently so their terminal sets can diverge without coupling.
+use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 
 use crate::instance::InstanceView;
-use crate::strategies::{ComposableStrategy, RoutingStrategy, SchedulingStrategy};
-use crate::types::{NativeStrategyWrapper, RequestId, VehicleSnapshot};
+use crate::strategies::{
+    BatchRoutingStrategy, ComposableStrategy, RoutingStrategy, SchedulingStrategy,
+};
+use crate::types::{NativeDispatchStrategy, RequestId, VehicleSnapshot};
 
-use super::gp_tree::{EvalContext, FlatGpTree, FlatTree};
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Number of terminal types in GP trees (0=TravelTime, 1=WindowEarliest, 2=WindowLatest,
-/// 3=TimeUntilDue, 4=Demand, 5=CurrentLoad, 6=RemainingCapacity, 7=ReleaseTime)
-const NUM_TERMINALS: usize = 8;
+use super::gp_tree::{EvalContext, FlatGpTree, RoleContext};
 
 // ---------------------------------------------------------------------------
-// Shared helper
+// Role-specific context types
+// ---------------------------------------------------------------------------
+
+/// Evaluation context for the vehicle-assignment (routing) tree.
+pub struct RoutingCtx<'a>(EvalContext<'a>);
+/// Evaluation context for the queue-ordering (sequencing) tree.
+pub struct SequencingCtx<'a>(EvalContext<'a>);
+/// Evaluation context for the request-rejection tree.
+pub struct RejectCtx<'a>(EvalContext<'a>);
+
+// Terminal IDs 0–7 are shared across all three roles:
+//   0=TravelTime, 1=WindowEarliest, 2=WindowLatest, 3=TimeUntilDue,
+//   4=Demand, 5=CurrentLoad, 6=RemainingCapacity, 7=ReleaseTime
+
+impl RoleContext for RoutingCtx<'_> {
+    const NUM_TERMINALS: usize = 8;
+    #[inline(always)]
+    fn eval_terminal(&self, id: u8) -> f32 {
+        self.0.terminal_value(id)
+    }
+}
+
+impl RoleContext for SequencingCtx<'_> {
+    const NUM_TERMINALS: usize = 8;
+    #[inline(always)]
+    fn eval_terminal(&self, id: u8) -> f32 {
+        self.0.terminal_value(id)
+    }
+}
+
+impl RoleContext for RejectCtx<'_> {
+    const NUM_TERMINALS: usize = 8;
+    #[inline(always)]
+    fn eval_terminal(&self, id: u8) -> f32 {
+        self.0.terminal_value(id)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
 // ---------------------------------------------------------------------------
 
 fn make_ctx<'a>(
@@ -47,7 +94,6 @@ fn make_ctx<'a>(
     }
 }
 
-/// Extract speed and capacity from the first vehicle spec in the view.
 fn view_vehicle_params(view: &InstanceView<'_>) -> (f32, f32) {
     view.vehicle_specs()
         .first()
@@ -55,13 +101,63 @@ fn view_vehicle_params(view: &InstanceView<'_>) -> (f32, f32) {
         .unwrap_or((1.0, f32::INFINITY))
 }
 
+/// Route a single request using the routing and reject trees.
+///
+/// Shared by [`GpRoutingStrategy`] and [`GpBatchRoutingStrategy`] to avoid
+/// code duplication.
+fn route_one(
+    routing_tree: &FlatGpTree,
+    reject_tree: &FlatGpTree,
+    rid: RequestId,
+    vehicles: &[VehicleSnapshot],
+    view: &InstanceView<'_>,
+    time: f32,
+) -> Option<i64> {
+    if vehicles.is_empty() {
+        return None;
+    }
+    let request = view.get(rid)?;
+    let (speed, capacity) = view_vehicle_params(view);
+
+    let routing_ctxs: Vec<RoutingCtx<'_>> = vehicles
+        .iter()
+        .map(|v| RoutingCtx(make_ctx(request, v, view, time, speed, capacity)))
+        .collect();
+    let routing_scores = routing_tree.eval_batch_for(&routing_ctxs);
+
+    let mut best_idx = 0;
+    let mut best_routing_score = routing_scores[0];
+    for (i, &score) in routing_scores.iter().enumerate().skip(1) {
+        if score > best_routing_score {
+            best_routing_score = score;
+            best_idx = i;
+        }
+    }
+
+    let reject_ctx = RejectCtx(make_ctx(
+        request,
+        &vehicles[best_idx],
+        view,
+        time,
+        speed,
+        capacity,
+    ));
+    let reject_score = reject_tree.eval_ctx(&reject_ctx);
+
+    if reject_score > best_routing_score {
+        None
+    } else {
+        Some(vehicles[best_idx].vehicle_id)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GpRoutingStrategy
 // ---------------------------------------------------------------------------
 
 pub struct GpRoutingStrategy {
-    routing_tree: FlatTree,
-    reject_tree: FlatTree,
+    routing_tree: FlatGpTree,
+    reject_tree: FlatGpTree,
 }
 
 impl RoutingStrategy for GpRoutingStrategy {
@@ -72,42 +168,53 @@ impl RoutingStrategy for GpRoutingStrategy {
         view: &InstanceView<'_>,
         time: f32,
     ) -> Option<i64> {
-        if vehicles.is_empty() {
-            return None;
-        }
+        route_one(
+            &self.routing_tree,
+            &self.reject_tree,
+            rid,
+            vehicles,
+            view,
+            time,
+        )
+    }
+}
 
-        let request = view.get(rid)?;
-        let (speed, capacity) = view_vehicle_params(view);
+// ---------------------------------------------------------------------------
+// GpBatchRoutingStrategy
+// ---------------------------------------------------------------------------
 
-        // Build terminal matrix for batch evaluation (NUM_TERMINALS × n vehicles)
-        let mut terminal_matrix: Vec<Vec<f32>> = vec![Vec::new(); NUM_TERMINALS];
-        for vehicle in vehicles {
-            let ctx = make_ctx(request, vehicle, view, time, speed, capacity);
-            for term_id in 0..NUM_TERMINALS {
-                terminal_matrix[term_id].push(ctx.terminal_value(term_id as u8));
-            }
-        }
+/// Naive [`BatchRoutingStrategy`] that applies the per-request GP routing logic
+/// sequentially to each request in the batch.
+///
+/// Because [`BatchRoutingStrategy::route_batch`] does not receive a simulation
+/// time, time-dependent terminals (`TimeUntilDue = latest − t`) are evaluated
+/// at `t = 0.0`.
+pub struct GpBatchRoutingStrategy {
+    routing_tree: FlatGpTree,
+    reject_tree: FlatGpTree,
+}
 
-        // Batch evaluate routing and reject trees
-        let routing_scores = self.routing_tree.eval_batch(&terminal_matrix);
-        let reject_scores = self.reject_tree.eval_batch(&terminal_matrix);
-
-        // Find best vehicle by routing score
-        let mut best_idx = 0;
-        let mut best_routing_score = routing_scores[0];
-        for (i, &score) in routing_scores.iter().enumerate().skip(1) {
-            if score > best_routing_score {
-                best_routing_score = score;
-                best_idx = i;
-            }
-        }
-
-        let best_reject_score = reject_scores[best_idx];
-        if best_reject_score > best_routing_score {
-            None
-        } else {
-            Some(vehicles[best_idx].vehicle_id)
-        }
+impl BatchRoutingStrategy for GpBatchRoutingStrategy {
+    fn route_batch(
+        &mut self,
+        requests: &[RequestId],
+        vehicles: &[VehicleSnapshot],
+        view: &InstanceView<'_>,
+    ) -> Vec<(RequestId, Option<i64>)> {
+        requests
+            .iter()
+            .map(|&rid| {
+                let assignment = route_one(
+                    &self.routing_tree,
+                    &self.reject_tree,
+                    rid,
+                    vehicles,
+                    view,
+                    0.0,
+                );
+                (rid, assignment)
+            })
+            .collect()
     }
 }
 
@@ -116,7 +223,7 @@ impl RoutingStrategy for GpRoutingStrategy {
 // ---------------------------------------------------------------------------
 
 pub struct GpSchedulingStrategy {
-    sequencing_tree: FlatTree,
+    sequencing_tree: FlatGpTree,
 }
 
 impl SchedulingStrategy for GpSchedulingStrategy {
@@ -133,16 +240,14 @@ impl SchedulingStrategy for GpSchedulingStrategy {
 
         let (speed, capacity) = view_vehicle_params(view);
 
-        // Build terminal matrix for batch evaluation (NUM_TERMINALS × queue length)
-        let mut terminal_matrix: Vec<Vec<f32>> = vec![Vec::new(); NUM_TERMINALS];
         let mut valid_requests = Vec::new();
+        let mut ctxs: Vec<SequencingCtx<'_>> = Vec::new();
 
         for &rid in queue {
             if let Some(request) = view.get(rid) {
-                let ctx = make_ctx(request, vehicle, view, time, speed, capacity);
-                for term_id in 0..NUM_TERMINALS {
-                    terminal_matrix[term_id].push(ctx.terminal_value(term_id as u8));
-                }
+                ctxs.push(SequencingCtx(make_ctx(
+                    request, vehicle, view, time, speed, capacity,
+                )));
                 valid_requests.push(rid);
             }
         }
@@ -151,10 +256,8 @@ impl SchedulingStrategy for GpSchedulingStrategy {
             return queue[0];
         }
 
-        // Batch evaluate sequencing tree
-        let scores = self.sequencing_tree.eval_batch(&terminal_matrix);
+        let scores = self.sequencing_tree.eval_batch_for(&ctxs);
 
-        // Find index with highest score
         let best_idx = scores
             .iter()
             .enumerate()
@@ -167,10 +270,11 @@ impl SchedulingStrategy for GpSchedulingStrategy {
 }
 
 // ---------------------------------------------------------------------------
-// Factory function
+// Factory functions
 // ---------------------------------------------------------------------------
 
-/// Return a [`NativeStrategyWrapper`] driven by three GP expression trees.
+/// Return a [`NativeDispatchStrategy`] driven by three GP expression trees
+/// using per-request (non-batched) routing.
 ///
 /// - `routing_tree`    — scores `(request, vehicle)` pairs; highest wins.
 /// - `sequencing_tree` — scores queued requests for an idle vehicle; highest wins.
@@ -180,20 +284,53 @@ pub fn gp_strategy(
     routing_tree: FlatGpTree,
     sequencing_tree: FlatGpTree,
     reject_tree: FlatGpTree,
-) -> NativeStrategyWrapper {
-    use std::collections::HashSet;
-
-    NativeStrategyWrapper {
+) -> NativeDispatchStrategy {
+    NativeDispatchStrategy {
         inner: Some(Box::new(ComposableStrategy {
             router: Box::new(GpRoutingStrategy {
-                routing_tree: routing_tree.inner,
-                reject_tree: reject_tree.inner,
+                routing_tree,
+                reject_tree,
             }),
-            scheduler: Box::new(GpSchedulingStrategy {
-                sequencing_tree: sequencing_tree.inner,
-            }),
+            scheduler: Box::new(GpSchedulingStrategy { sequencing_tree }),
             queues: HashMap::new(),
             routed: HashSet::new(),
+        })),
+    }
+}
+
+/// Return a [`NativeDispatchStrategy`] using slot-based batch routing with GP trees.
+///
+/// Requests released within each `slot_size`-wide time window are collected and
+/// then routed all at once by applying the GP routing logic sequentially to each
+/// request (naive batch: no time is available during routing, so time-dependent
+/// terminals evaluate at `t = 0.0`).
+///
+/// - `routing_tree`    — scores `(request, vehicle)` pairs; highest wins.
+/// - `sequencing_tree` — scores queued requests for an idle vehicle; highest wins.
+/// - `reject_tree`     — if its score exceeds the routing score, request is rejected.
+/// - `slot_size`       — width of each routing time slot.
+#[pyfunction]
+pub fn gp_batch_strategy(
+    routing_tree: FlatGpTree,
+    sequencing_tree: FlatGpTree,
+    reject_tree: FlatGpTree,
+    slot_size: f64,
+) -> NativeDispatchStrategy {
+    use crate::strategies::batch::BatchComposableStrategy;
+
+    let slot_size = slot_size as f32;
+    NativeDispatchStrategy {
+        inner: Some(Box::new(BatchComposableStrategy {
+            router: Box::new(GpBatchRoutingStrategy {
+                routing_tree,
+                reject_tree,
+            }),
+            scheduler: Box::new(GpSchedulingStrategy { sequencing_tree }),
+            slot_size,
+            next_slot_end: slot_size,
+            buffer: Vec::new(),
+            seen: HashSet::new(),
+            queues: HashMap::new(),
         })),
     }
 }

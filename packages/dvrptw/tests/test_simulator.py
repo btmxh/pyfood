@@ -1,5 +1,7 @@
 """Tests for the DVRPTW simulator engine."""
 
+from dvrptw.simulator import SimulationSnapshot, InstanceView
+
 import unittest
 from dvrptw import (
     DVRPTWInstance,
@@ -7,7 +9,6 @@ from dvrptw import (
     Vehicle,
     TimeWindow,
     PythonSimulator as Simulator,
-    SimulationState,
     DispatchEvent,
     WaitEvent,
     RejectEvent,
@@ -21,11 +22,11 @@ class SimpleGreedyStrategy:
         self.actions_made = 0
         self.planning_horizon = planning_horizon
 
-    def next_events(self, state: SimulationState) -> list:
+    def next_events(self, state: SimulationSnapshot, view: InstanceView) -> list:
         """Dispatch available vehicles to pending requests in order."""
         actions = []
 
-        if not state.pending_requests:
+        if not state.pending:
             # No more pending requests, wait until end of planning horizon
             if self.planning_horizon:
                 if state.time < self.planning_horizon:
@@ -33,7 +34,7 @@ class SimpleGreedyStrategy:
             return actions
 
         # Find idle vehicles and pending requests
-        pending_list = sorted(state.pending_requests)
+        pending_list = sorted(state.pending)
         idle_vehicles = [v for v in state.vehicles if v.available_at <= state.time]
 
         # Dispatch idle vehicles to pending requests
@@ -97,7 +98,7 @@ class TestSimulatorBasic(unittest.TestCase):
             requests=[depot, request1, request2],
             vehicles=[vehicle1],
             planning_horizon=500.0,
-            depot_ids=[0],
+            depot_id=0,
         )
 
     def test_simple_simulation(self):
@@ -139,8 +140,8 @@ class TestSimulatorBasic(unittest.TestCase):
                 self.test_case = test_case
                 self.dispatched = False
 
-            def next_events(self, state):
-                if not self.dispatched and state.pending_requests:
+            def next_events(self, state: SimulationSnapshot, view: InstanceView):
+                if not self.dispatched and state.pending:
                     self.dispatched = True
                     return [DispatchEvent(vehicle_id=0, destination_node=1)]
                 return []
@@ -160,8 +161,8 @@ class TestSimulatorBasic(unittest.TestCase):
             def __init__(self):
                 self.rejected = False
 
-            def next_events(self, state):
-                if not self.rejected and state.pending_requests:
+            def next_events(self, state: SimulationSnapshot, view: InstanceView):
+                if not self.rejected and state.pending:
                     self.rejected = True
                     return [RejectEvent(request_id=1)]
                 return []
@@ -215,14 +216,14 @@ class TestSimulatorConstraints(unittest.TestCase):
             requests=[depot, request1, request2],
             vehicles=[vehicle1],
             planning_horizon=500.0,
-            depot_ids=[0],
+            depot_id=0,
         )
 
     def test_capacity_violation(self):
         """Test that capacity violations are detected."""
 
         class OverloadStrategy:
-            def next_events(self, state):
+            def next_events(self, state: SimulationSnapshot, view: InstanceView):
                 # Try to dispatch both requests to same vehicle
                 if len([v for v in state.vehicles if v.available_at <= state.time]) > 0:
                     return [
@@ -270,18 +271,18 @@ class TestSimulatorTimeWindows(unittest.TestCase):
             requests=[depot, request1],
             vehicles=[vehicle1],
             planning_horizon=500.0,
-            depot_ids=[0],
+            depot_id=0,
         )
 
     def test_time_window_violation(self):
         """Test that time window violations are detected."""
 
         class LateStrategy:
-            def next_events(self, state):
+            def next_events(self, state: SimulationSnapshot, view: InstanceView):
                 # Strategy tries to dispatch too late
                 if state.time < 20.0:
                     return [WaitEvent(until_time=20.0)]
-                if state.pending_requests:
+                if state.pending:
                     return [DispatchEvent(vehicle_id=0, destination_node=1)]
                 return []
 
@@ -296,7 +297,7 @@ class TestSimulatorTimeWindows(unittest.TestCase):
         """Test that requests with closed time windows are auto-rejected."""
 
         class WaitStrategy:
-            def next_events(self, state):
+            def next_events(self, state: SimulationSnapshot, view: InstanceView):
                 # Wait until after time window closes
                 if state.time < 10.0:
                     return [WaitEvent(until_time=10.0)]
@@ -348,7 +349,7 @@ class TestSimulatorMultipleVehicles(unittest.TestCase):
             requests=[depot] + requests,
             vehicles=vehicles,
             planning_horizon=500.0,
-            depot_ids=[0],
+            depot_id=0,
         )
 
     def test_multi_vehicle_dispatch(self):
@@ -397,7 +398,7 @@ class TestSimulatorActionCallback(unittest.TestCase):
             requests=[depot, request1],
             vehicles=[vehicle1],
             planning_horizon=100.0,
-            depot_ids=[0],
+            depot_id=0,
         )
 
     def test_action_callback_invoked(self):
@@ -449,7 +450,7 @@ class TestSimulatorMetrics(unittest.TestCase):
             requests=[depot, request1],
             vehicles=[vehicle1],
             planning_horizon=500.0,
-            depot_ids=[0],
+            depot_id=0,
         )
 
     def test_metrics_computation(self):

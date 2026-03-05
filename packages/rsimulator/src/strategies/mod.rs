@@ -19,8 +19,10 @@ pub mod gp_strategy;
 pub mod gp_tree;
 pub mod greedy;
 
-pub use batch::batch_composable_strategy;
-pub use composable::{ComposableStrategy, composable_strategy};
+pub use batch::{batch_composable_strategy, python_batch_routing_strategy};
+pub use composable::{
+    ComposableStrategy, composable_strategy, python_routing_strategy, python_scheduling_strategy,
+};
 pub use gp_tree::{
     FlatGpTree, flat_gp_add, flat_gp_const, flat_gp_current_load, flat_gp_demand, flat_gp_div,
     flat_gp_mul, flat_gp_release_time, flat_gp_remaining_capacity, flat_gp_sub,
@@ -33,6 +35,64 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::instance::InstanceView;
 use crate::types::{RequestId, VehicleSnapshot};
+
+// ---------------------------------------------------------------------------
+// NativeRoutingStrategy / NativeSchedulingStrategy — pyclass wrappers
+// ---------------------------------------------------------------------------
+
+/// A Python-visible wrapper around a native [`RoutingStrategy`] implementation.
+///
+/// Construct using [`python_routing_strategy`] (wraps a Python object) or
+/// any Rust factory that returns a `Box<dyn RoutingStrategy>`.
+/// Pass to [`composable_strategy`] instead of a raw Python object.
+#[pyclass]
+pub struct NativeRoutingStrategy {
+    pub inner: Option<Box<dyn RoutingStrategy>>,
+}
+
+impl NativeRoutingStrategy {
+    pub fn new(strategy: impl RoutingStrategy + 'static) -> Self {
+        Self {
+            inner: Some(Box::new(strategy)),
+        }
+    }
+}
+
+/// A Python-visible wrapper around a native [`SchedulingStrategy`] implementation.
+///
+/// Construct using [`python_scheduling_strategy`] (wraps a Python object) or
+/// any Rust factory that returns a `Box<dyn SchedulingStrategy>`.
+/// Pass to [`composable_strategy`] instead of a raw Python object.
+#[pyclass]
+pub struct NativeSchedulingStrategy {
+    pub inner: Option<Box<dyn SchedulingStrategy>>,
+}
+
+impl NativeSchedulingStrategy {
+    pub fn new(strategy: impl SchedulingStrategy + 'static) -> Self {
+        Self {
+            inner: Some(Box::new(strategy)),
+        }
+    }
+}
+
+/// A Python-visible wrapper around a native [`BatchRoutingStrategy`] implementation.
+///
+/// Construct using [`python_batch_routing_strategy`] (wraps a Python object) or
+/// any Rust factory that returns a `Box<dyn BatchRoutingStrategy>`.
+/// Pass to [`batch_composable_strategy`] instead of a raw Python object.
+#[pyclass]
+pub struct NativeBatchRoutingStrategy {
+    pub inner: Option<Box<dyn BatchRoutingStrategy>>,
+}
+
+impl NativeBatchRoutingStrategy {
+    pub fn new(strategy: impl BatchRoutingStrategy + 'static) -> Self {
+        Self {
+            inner: Some(Box::new(strategy)),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // RoutingStrategy and SchedulingStrategy — composable strategy sub-traits

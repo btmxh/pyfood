@@ -48,24 +48,22 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 import os
 import shutil
 
 import pulp
 
-from dvrptw.instance import DVRPTWInstance, Request
-from dvrptw.evaluator import Evaluator, StarNormEvaluator
-from dvrptw.simulator.events import (
+from ..instance import DVRPTWInstance, Request
+from ..evaluator import Evaluator, StarNormEvaluator
+from ..simulator import (
     DispatchEvent,
     RejectEvent,
     WaitEvent,
     SchedulerAction,
+    SimulationSnapshot,
+    InstanceView,
+    PythonDispatchStrategy,
 )
-from dvrptw.simulator.state import SimulationState
-
-if TYPE_CHECKING:
-    pass
 
 log = logging.getLogger(__name__)
 
@@ -265,8 +263,16 @@ def _solve_vrptw(
     for i in range(n):
         tw = nodes[i].time_window
         for k in range(K):
-            # Lower bound always applies (vehicle must not start before opening)
-            prob += (t[(i, k)] >= tw.earliest, f"tw_lo_i{i}_k{k}")
+            # Lower bound always applies (vehicle must not start before opening
+            # or before the request's release_time).  The original formulation
+            # did not consider dynamic release times, which made ILP plans
+            # unreplayable during the online simulation: a service scheduled
+            # before a request's release would be delayed at replay time and
+            # could miss the time-window.  Enforce t >= release_time here so
+            # planned service starts are causally feasible during replay.
+            release_lo = getattr(nodes[i], "release_time", 0.0)
+            lo = max(tw.earliest, release_lo)
+            prob += (t[(i, k)] >= lo, f"tw_lo_i{i}_k{k}")
             # Upper bound: if not visited by this vehicle, t is unconstrained
             # but we bound it anyway (it won't affect objective since x=0)
             prob += (t[(i, k)] <= tw.latest, f"tw_hi_i{i}_k{k}")
@@ -364,7 +370,7 @@ def _solve_vrptw(
 # ---------------------------------------------------------------------------
 
 
-class ILPStrategy:
+class ILPStrategy(PythonDispatchStrategy):
     """VRPTW ILP strategy that solves ahead-of-time and replays during simulation.
 
     Since an exact ILP requires the full instance to be known up front, this
@@ -427,17 +433,20 @@ class ILPStrategy:
         self._dispatched: set[int] = set()
 
     # ------------------------------------------------------------------
-    # DispatchingStrategy protocol
+    # DispatchStrategy protocol
     # ------------------------------------------------------------------
 
-    def next_events(self, state: SimulationState) -> list[SchedulerAction]:
+    def next_events(
+        self, state: SimulationSnapshot, view: InstanceView
+    ) -> list[SchedulerAction]:
         actions: list[SchedulerAction] = []
+        instance_view = view
 
         # Reject any pending request that the ILP plan does not serve
         planned_requests: set[int] = {
             node for plan in self._plans for node in plan.stops
         }
-        for req_id in state.pending_requests:
+        for req_id in state.pending:
             if req_id not in planned_requests and req_id not in self._rejected:
                 self._rejected.add(req_id)
                 actions.append(RejectEvent(request_id=req_id))
@@ -457,7 +466,7 @@ class ILPStrategy:
             node_id, planned_start = plan.peek()  # type: ignore[misc]
 
             # Check if the request has been released yet
-            if node_id not in state.released_requests:
+            if node_id not in instance_view.released_requests:
                 # Not yet released — we need to wait until it is
                 try:
                     release_t = self._instance.get_request(node_id).release_time
@@ -471,7 +480,7 @@ class ILPStrategy:
                 continue
 
             # Check if the request is still pending (not already served/rejected)
-            if node_id not in state.pending_requests:
+            if node_id not in state.pending:
                 # Already handled (served by another vehicle or rejected);
                 # skip this stop and try the next one
                 plan.advance()
@@ -481,26 +490,94 @@ class ILPStrategy:
                 if peek is None:
                     continue
                 node_id, planned_start = peek
-                if node_id not in state.pending_requests:
+                if node_id not in state.pending:
                     continue  # give up for this cycle; will retry next event
 
+            # Compute travel time from vehicle current position to the node so
+            # we can decide whether to dispatch now or wait until the planned
+            # departure that yields the ILP's planned service start.
+            try:
+                from_req = self._instance.get_request(vehicle.position)
+            except KeyError:
+                # Missing position info: dispatch immediately and hope for best
+                actions.append(DispatchEvent(vehicle_id=vid, destination_node=node_id))
+                self._dispatched.add(node_id)
+                plan.advance()
+                continue
+
+            to_req = self._instance.get_request(node_id)
+            dist = from_req.distance_to(to_req)
+            speed = self._instance.vehicles[0].speed if self._instance.vehicles else 1.0
+            travel_time = dist / speed if speed > 0.0 else float("inf")
+
+            # planned_start is the ILP's service-start time for this stop.
+            # To achieve it we should depart at planned_departure = planned_start - travel_time.
+            planned_departure = planned_start - travel_time
+
+            # If the planned departure is in the future, request a wait until
+            # that time (the simulator will wake us then).  Otherwise dispatch now.
+            if planned_departure > state.time:
+                earliest_next_event = (
+                    planned_departure
+                    if earliest_next_event is None
+                    else min(earliest_next_event, planned_departure)
+                )
+                continue
+
+            # Before dispatching, validate feasibility under the current
+            # runtime snapshot: capacity and time-window checks. If the
+            # dispatch would be infeasible now, reject the request (the ILP
+            # planned it assuming ideal timings which may not hold during
+            # replay) and advance the plan pointer.
+            dest_req = self._instance.get_request(node_id)
+            # capacity check (depots always allowed)
+            veh_spec = next(
+                (vs for vs in self._instance.vehicles if vs.id == vid), None
+            )
+            cap = veh_spec.capacity if veh_spec is not None else float("inf")
+            if (not dest_req.is_depot) and (
+                vehicle.current_load + dest_req.demand > cap
+            ):
+                # cannot serve due to capacity → reject and skip
+                self._rejected.add(node_id)
+                actions.append(RejectEvent(request_id=node_id))
+                plan.advance()
+                continue
+
+            # compute arrival/service start if we depart now
+            arrival = state.time + travel_time
+            service_start = max(arrival, dest_req.time_window.earliest)
+            if service_start > dest_req.time_window.latest:
+                # cannot meet time window → reject and skip
+                self._rejected.add(node_id)
+                actions.append(RejectEvent(request_id=node_id))
+                plan.advance()
+                continue
+
+            # dispatch now
             actions.append(DispatchEvent(vehicle_id=vid, destination_node=node_id))
             self._dispatched.add(node_id)
             plan.advance()
 
-        # If no actions and there are pending requests, emit a WaitEvent so the
-        # simulator wakes us up at the next relevant time.
-        if not actions:
-            candidates: list[float] = []
-            if earliest_next_event is not None:
-                candidates.append(earliest_next_event)
-            # Wake up when the next vehicle becomes idle
-            busy_times = [
-                v.available_at for v in state.vehicles if v.available_at > state.time
-            ]
-            if busy_times:
-                candidates.append(min(busy_times))
-            if candidates:
-                actions.append(WaitEvent(until_time=min(candidates)))
+        # Emit a WaitEvent so the simulator wakes us at the next relevant
+        # time.  This is needed even when other actions (dispatches) were
+        # already queued: a dispatched vehicle may complete later than the
+        # planned departure of another vehicle, so we must explicitly
+        # schedule a wake-up for the earliest future event.  Only consider
+        # candidate times strictly in the future (> state.time) to avoid
+        # producing invalid WaitEvents.
+        candidates: list[float] = []
+        if earliest_next_event is not None and earliest_next_event > state.time:
+            candidates.append(earliest_next_event)
+        # Wake up when the next vehicle becomes idle
+        busy_times = [
+            v.available_at for v in state.vehicles if v.available_at > state.time
+        ]
+        if busy_times:
+            candidates.append(min(busy_times))
+        if candidates:
+            until = min(candidates)
+            if until > state.time:
+                actions.append(WaitEvent(until_time=until))
 
         return actions
