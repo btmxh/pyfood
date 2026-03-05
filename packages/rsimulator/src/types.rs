@@ -1,16 +1,13 @@
 /// types.rs — Fundamental data types with no internal crate dependencies.
 ///
 /// # Contents
-/// - [`RequestId`]             — newtype over i64
-/// - [`SimAction`]             — zero-allocation action enum
-/// - [`VehicleSnapshot`]       — per-vehicle snapshot slice
-/// - [`SimulationSnapshot`]    — lightweight state passed to strategies
-/// - [`NativeDispatchStrategy`] — `#[pyclass]` box around `Box<dyn RustStrategy>`
-/// - [`NativeCallbackWrapper`] — `#[pyclass]` box around `Box<dyn RustCallback>`
-///
-/// The [`RustStrategy`], [`RustCallback`], and [`InstanceView`] traits/types
-/// live in `instance.rs` (they depend on `Request`/`VehicleSpec` defined
-/// there, and keeping them together avoids a circular import).
+/// - [`RequestId`]              — newtype over i64
+/// - [`SimAction`]              — zero-allocation action enum
+/// - [`VehicleState`]           — per-vehicle mutable runtime state (also aliased as VehicleSnapshot)
+/// - [`VehicleSnapshot`]        — type alias for VehicleState (used by strategy APIs)
+/// - [`SimulationSnapshot`]     — zero-copy borrowed view of simulator state
+/// - [`NativeDispatchStrategy`] — `#[pyclass]` box around `Box<dyn DispatchStrategy>`
+/// - [`NativeEventCallback`]    — `#[pyclass]` box around `Box<dyn EventCallback>`
 use std::collections::HashSet;
 
 use pyo3::prelude::*;
@@ -20,22 +17,14 @@ use pyo3::prelude::*;
 // ---------------------------------------------------------------------------
 
 /// Newtype wrapper around `i64` for request/node identifiers.
-///
-/// Rust-internal only — not exposed as a `#[pyclass]`. Prevents accidental
-/// confusion between vehicle IDs, request IDs, and raw integers in function
-/// signatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestId(pub i64);
 
 // ---------------------------------------------------------------------------
-// SimAction enum — zero-allocation replacement for Python action objects
+// SimAction enum
 // ---------------------------------------------------------------------------
 
 /// The three actions a strategy can return.
-///
-/// This enum is used everywhere inside the Rust simulation loop. It is never
-/// heap-allocated in the hot path (returned in a `Vec<SimAction>` by value).
-/// Python actions are converted to/from this type only inside the adapters.
 #[derive(Debug, Clone)]
 pub enum SimAction {
     Dispatch { vehicle_id: i64, dest: RequestId },
@@ -44,15 +33,14 @@ pub enum SimAction {
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot types — passed by reference to RustStrategy::next_events
+// VehicleState / VehicleSnapshot
 // ---------------------------------------------------------------------------
 
-/// Lightweight per-vehicle state slice, part of [`SimulationSnapshot`].
-///
-/// All fields are plain Rust values — no PyO3 types, no allocation beyond the
-/// `Vec`s that mirror the vehicle's existing route storage.
+/// Mutable per-vehicle runtime state, also used as the snapshot type passed
+/// to strategies. Moved here from `instance.rs` so that `SimulationSnapshot`
+/// can hold a `&[VehicleState]` without introducing a circular import.
 #[derive(Debug, Clone)]
-pub struct VehicleSnapshot {
+pub struct VehicleState {
     pub vehicle_id: i64,
     pub position: RequestId,
     pub current_load: f32,
@@ -61,39 +49,37 @@ pub struct VehicleSnapshot {
     pub service_times: Vec<f32>,
 }
 
-/// A lightweight snapshot of simulation state passed to [`RustStrategy`].
+/// Type alias kept for backwards compatibility with strategy code that uses
+/// `VehicleSnapshot`.
+pub type VehicleSnapshot = VehicleState;
+
+// ---------------------------------------------------------------------------
+// SimulationSnapshot — zero-copy borrowed view of simulator state
+// ---------------------------------------------------------------------------
+
+/// A zero-copy snapshot of simulation state passed by reference to strategies.
 ///
-/// `released` contains only IDs (not full request data).  A native strategy
-/// that needs request details should hold a reference to the instance data it
-/// was constructed with.
-#[derive(Debug, Clone)]
-pub struct SimulationSnapshot {
+/// All fields are borrows into the `Simulator`'s own collections, so
+/// constructing a snapshot is O(1) — no allocation, no cloning.
+///
+/// `released` points to an incrementally-maintained `HashSet` inside the
+/// `Simulator` that is updated in O(new_releases) per tick via a sorted-Vec
+/// cursor (see `simulator.rs`).
+#[derive(Debug)]
+pub struct SimulationSnapshot<'a> {
     pub time: f32,
-    pub pending: HashSet<RequestId>,
-    pub served: HashSet<RequestId>,
-    pub rejected: HashSet<RequestId>,
+    pub pending: &'a HashSet<RequestId>,
+    pub served: &'a HashSet<RequestId>,
+    pub rejected: &'a HashSet<RequestId>,
     /// IDs of all non-depot requests whose `release_time <= time`.
-    pub released: HashSet<RequestId>,
-    pub vehicles: Vec<VehicleSnapshot>,
+    pub released: &'a HashSet<RequestId>,
+    pub vehicles: &'a [VehicleState],
 }
 
 // ---------------------------------------------------------------------------
-// NativeDispatchStrategy — #[pyclass] box around Box<dyn RustStrategy>
+// NativeDispatchStrategy
 // ---------------------------------------------------------------------------
 
-/// A Python-visible wrapper around a native [`RustStrategy`] implementation.
-///
-/// Construct instances using the factory functions exposed by this module
-/// (e.g. [`greedy_strategy`]).  Pass them directly to `Simulator.__init__`
-/// instead of a Python `DispatchStrategy` object to bypass all GIL
-/// overhead during simulation.
-///
-/// ```python
-/// from rsimulator import Simulator, greedy_strategy
-///
-/// sim = Simulator(instance, greedy_strategy())
-/// result = sim.run()
-/// ```
 #[pyclass]
 pub struct NativeDispatchStrategy {
     pub inner: Option<Box<dyn crate::instance::DispatchStrategy>>,

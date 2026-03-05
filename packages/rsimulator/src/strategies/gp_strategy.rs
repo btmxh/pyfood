@@ -119,21 +119,38 @@ fn route_one(
     let request = view.get(rid)?;
     let (speed, capacity) = view_vehicle_params(view);
 
+    let t_mkctx = std::time::Instant::now();
     let routing_ctxs: Vec<RoutingCtx<'_>> = vehicles
         .iter()
         .map(|v| RoutingCtx(make_ctx(request, v, view, time, speed, capacity)))
         .collect();
+    crate::bench::TIME_MAKE_CTX_NS.fetch_add(
+        crate::bench::elapsed_ns(t_mkctx),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
+    let t_evbat = std::time::Instant::now();
     let routing_scores = routing_tree.eval_batch_for(&routing_ctxs);
+    crate::bench::TIME_EVAL_BATCH_ROUTING_NS.fetch_add(
+        crate::bench::elapsed_ns(t_evbat),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     let mut best_idx = 0;
     let mut best_routing_score = routing_scores[0];
+    let t_best = std::time::Instant::now();
     for (i, &score) in routing_scores.iter().enumerate().skip(1) {
         if score > best_routing_score {
             best_routing_score = score;
             best_idx = i;
         }
     }
+    crate::bench::TIME_ROUTE_ONE_BESTSCAN_NS.fetch_add(
+        crate::bench::elapsed_ns(t_best),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
+    let t_mkr = std::time::Instant::now();
     let reject_ctx = RejectCtx(make_ctx(
         request,
         &vehicles[best_idx],
@@ -142,7 +159,18 @@ fn route_one(
         speed,
         capacity,
     ));
+    crate::bench::TIME_ROUTE_ONE_MAKE_REJECT_NS.fetch_add(
+        crate::bench::elapsed_ns(t_mkr),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let t_rej = std::time::Instant::now();
     let reject_score = reject_tree.eval_ctx(&reject_ctx);
+    crate::bench::TIME_REJECT_EVAL_NS.fetch_add(
+        crate::bench::elapsed_ns(t_rej),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
+    crate::bench::ROUTE_ONE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     if reject_score > best_routing_score {
         None
@@ -286,15 +314,13 @@ pub fn gp_strategy(
     reject_tree: FlatGpTree,
 ) -> NativeDispatchStrategy {
     NativeDispatchStrategy {
-        inner: Some(Box::new(ComposableStrategy {
-            router: Box::new(GpRoutingStrategy {
+        inner: Some(Box::new(ComposableStrategy::new(
+            Box::new(GpRoutingStrategy {
                 routing_tree,
                 reject_tree,
             }),
-            scheduler: Box::new(GpSchedulingStrategy { sequencing_tree }),
-            queues: HashMap::new(),
-            routed: HashSet::new(),
-        })),
+            Box::new(GpSchedulingStrategy { sequencing_tree }),
+        ))),
     }
 }
 

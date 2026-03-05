@@ -294,7 +294,7 @@ def run_benchmark() -> list[RunResult]:
         t0 = time.perf_counter()
         evaluator = StarNormEvaluator.from_instance(w1=w, w2=1.0 - w, instance=instance)
         strategy = ILPStrategy(
-            instance, evaluator=evaluator, time_limit_s=120.0, mip_gap=0.005
+            instance, evaluator=evaluator, time_limit_s=1.0, mip_gap=0.005
         )
         sim = PythonSimulator(instance, strategy)
         result = sim.run()

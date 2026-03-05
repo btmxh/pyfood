@@ -155,7 +155,7 @@ impl DispatchStrategy for BatchComposableStrategy {
 
     fn next_events(
         &mut self,
-        state: &SimulationSnapshot,
+        state: &SimulationSnapshot<'_>,
         view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
         // Defensive init for Python adapters: ensure router/scheduler have a
@@ -187,7 +187,7 @@ impl DispatchStrategy for BatchComposableStrategy {
             self.buffer.sort_unstable_by_key(|r| r.0);
             let batch: Vec<RequestId> = self.buffer.drain(..).collect();
 
-            let assignments = self.router.route_batch(&batch, &state.vehicles, view);
+            let assignments = self.router.route_batch(&batch, state.vehicles, view);
 
             // Validate coverage in debug mode.
             debug_assert_eq!(

@@ -170,20 +170,48 @@ pub struct ComposableStrategy {
     pub queues: HashMap<i64, VecDeque<RequestId>>,
     /// Requests already passed to the router (de-dup guard).
     pub routed: HashSet<RequestId>,
+    /// Per-vehicle total demand of requests currently queued (assigned but not dispatched).
+    /// Densely stored: index = vehicle_id_to_index[vehicle_id]
+    pub queued_loads: Vec<f32>,
+    /// Map vehicle_id -> index into `queued_loads`.
+    pub vehicle_id_to_index: HashMap<i64, usize>,
+    last_time: f32,
+    next_release_idx: usize,
+}
+
+impl ComposableStrategy {
+    pub fn new(router: Box<dyn RoutingStrategy>, scheduler: Box<dyn SchedulingStrategy>) -> Self {
+        Self {
+            router,
+            scheduler,
+            queues: HashMap::new(),
+            routed: HashSet::new(),
+            queued_loads: Vec::new(),
+            vehicle_id_to_index: HashMap::new(),
+            last_time: 0.0,
+            next_release_idx: 0,
+        }
+    }
 }
 
 impl DispatchStrategy for ComposableStrategy {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         self.router.initialize(view);
         self.scheduler.initialize(view);
-        for vs in view.vehicle_specs() {
+        self.queued_loads.clear();
+        self.vehicle_id_to_index.clear();
+        for (i, vs) in view.vehicle_specs().iter().enumerate() {
             self.queues.entry(vs.id).or_default();
+            self.vehicle_id_to_index.insert(vs.id, i);
+            self.queued_loads.push(0.0);
         }
+        self.last_time = f32::NEG_INFINITY;
+        self.next_release_idx = 0;
     }
 
     fn next_events(
         &mut self,
-        state: &SimulationSnapshot,
+        state: &SimulationSnapshot<'_>,
         view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
         // Defensive: ensure sub-strategies have been initialized. Some
@@ -195,49 +223,75 @@ impl DispatchStrategy for ComposableStrategy {
         let mut actions: Vec<SimAction> = Vec::new();
 
         // Phase 1: route newly-released requests (exactly once per request).
-        let mut new_requests: Vec<RequestId> = state
-            .released
-            .iter()
-            .filter(|rid| {
-                !self.routed.contains(rid)
-                    && !state.served.contains(rid)
-                    && !state.rejected.contains(rid)
-            })
-            .copied()
-            .collect();
-        new_requests.sort_unstable_by_key(|r| r.0);
+        let t_p1_scan = std::time::Instant::now();
+        let start = self.next_release_idx;
+        while self.next_release_idx < view.ascending_release.len()
+            && view.ascending_release[self.next_release_idx].0 <= state.time
+        {
+            self.next_release_idx += 1;
+        }
+        let end = self.next_release_idx;
 
-        for rid in new_requests {
-            self.routed.insert(rid);
+        let new_requests = &view.ascending_release[start..end];
+        crate::bench::TIME_PHASE1_SCAN_NS.fetch_add(
+            crate::bench::elapsed_ns(t_p1_scan),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
-            // Build an augmented vehicles snapshot that accounts for already-
-            // queued (but not yet dispatched) requests. We clone the
-            // SimulationSnapshot's vehicle slices and add the sum of queued
-            // demands to each vehicle's `current_load`. This lets routers
-            // (notably the GP router) score vehicles while considering pending
-            // assignments without mutating the shared `state` object.
-            let mut aug_vehicles: Vec<VehicleSnapshot> = state.vehicles.clone();
-            for v in aug_vehicles.iter_mut() {
-                if let Some(queue) = self.queues.get(&v.vehicle_id) {
-                    let mut extra_load: f32 = 0.0;
-                    for &qrid in queue.iter() {
-                        if let Some(req) = view.get(qrid) {
-                            extra_load += req.demand;
-                        }
-                    }
-                    v.current_load += extra_load;
+        // Build augmented vehicles once per tick by applying per-vehicle queued
+        // load totals (kept in `self.queued_loads`). As we assign new requests
+        // during this loop, update both `self.queued_loads` and the
+        // corresponding `aug_vehicles` entry so subsequent routing sees the
+        // incremental assignments without rescanning queues.
+        let mut aug_vehicles = state.vehicles.to_vec();
+        for v in aug_vehicles.iter_mut() {
+            if let Some(idx) = self.vehicle_id_to_index.get(&v.vehicle_id) {
+                if let Some(qload) = self.queued_loads.get(*idx) {
+                    v.current_load += *qload;
                 }
             }
+        }
+
+        let t_p1_routing = std::time::Instant::now();
+        for (_, rid) in new_requests {
+            let rid = *rid;
+            self.routed.insert(rid);
 
             match self.router.route(rid, &aug_vehicles, view, state.time) {
                 Some(vehicle_id) => {
+                    // push into queue and update queued_loads and aug_vehicles
                     self.queues.entry(vehicle_id).or_default().push_back(rid);
+                    if let Some(req) = view.get(rid) {
+                        let delta = req.demand;
+                        // ensure we have an index for this vehicle
+                        let idx = if let Some(idx) = self.vehicle_id_to_index.get(&vehicle_id) {
+                            *idx
+                        } else {
+                            let new_idx = self.queued_loads.len();
+                            self.vehicle_id_to_index.insert(vehicle_id, new_idx);
+                            self.queued_loads.push(0.0);
+                            new_idx
+                        };
+                        if let Some(entry) = self.queued_loads.get_mut(idx) {
+                            *entry += delta;
+                        }
+                        // find and update matching aug_vehicles entry
+                        if let Some(v) =
+                            aug_vehicles.iter_mut().find(|v| v.vehicle_id == vehicle_id)
+                        {
+                            v.current_load += delta;
+                        }
+                    }
                 }
                 None => {
                     actions.push(SimAction::Reject { request_id: rid });
                 }
             }
         }
+        crate::bench::TIME_PHASE1_ROUTING_NS.fetch_add(
+            crate::bench::elapsed_ns(t_p1_routing),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         // Phase 2: dispatch idle vehicles with queued work.
         let mut vehicle_ids: Vec<i64> = state.vehicles.iter().map(|v| v.vehicle_id).collect();
@@ -261,6 +315,7 @@ impl DispatchStrategy for ComposableStrategy {
             // calling the scheduler. A request is infeasible if, when dispatched
             // now from the vehicle's current position, its service_start would
             // exceed its time-window latest, or if it would violate capacity.
+            let t_p2f = std::time::Instant::now();
             let mut retained_queue: VecDeque<RequestId> = VecDeque::new();
             let mut infeasible: Vec<RequestId> = Vec::new();
             for &rid in queue.iter() {
@@ -306,9 +361,31 @@ impl DispatchStrategy for ComposableStrategy {
                     infeasible.push(rid);
                 }
             }
+            crate::bench::TIME_PHASE2_FEASIBILITY_NS.fetch_add(
+                crate::bench::elapsed_ns(t_p2f),
+                std::sync::atomic::Ordering::Relaxed,
+            );
 
             // Replace the queue with only the retained (feasible) requests
+            // Recompute queued_load for this vehicle from retained_queue (one pass)
+            let mut new_queue_load: f32 = 0.0;
+            for &qrid in retained_queue.iter() {
+                if let Some(r) = view.get(qrid) {
+                    new_queue_load += r.demand;
+                }
+            }
             *queue = retained_queue;
+            // write back into dense queued_loads vector
+            if let Some(idx) = self.vehicle_id_to_index.get(&vid) {
+                if let Some(entry) = self.queued_loads.get_mut(*idx) {
+                    *entry = new_queue_load;
+                }
+            } else {
+                // mapping missing — append new slot
+                let new_idx = self.queued_loads.len();
+                self.vehicle_id_to_index.insert(vid, new_idx);
+                self.queued_loads.push(new_queue_load);
+            }
 
             // Emit Reject actions for infeasible assignments
             for rid in infeasible.iter() {
@@ -321,44 +398,37 @@ impl DispatchStrategy for ComposableStrategy {
             }
 
             // Ask scheduler to pick one request from the remaining feasible queue
+            let t_p2s = std::time::Instant::now();
             let queue_slice: Vec<RequestId> = queue.iter().copied().collect();
             let chosen = self
                 .scheduler
                 .schedule(vehicle, &queue_slice, view, state.time);
-            queue.retain(|r| *r != chosen);
+            // remove chosen from queue and decrement queued_loads
+            if let Some(pos) = queue.iter().position(|r| *r == chosen) {
+                // remove by position
+                queue.remove(pos);
+                if let Some(req) = view.get(chosen) {
+                    if let Some(idx) = self.vehicle_id_to_index.get(&vid) {
+                        if let Some(entry) = self.queued_loads.get_mut(*idx) {
+                            *entry -= req.demand;
+                            if *entry < 0.0 {
+                                *entry = 0.0; // guard against negative due to rounding
+                            }
+                        }
+                    }
+                }
+            }
             actions.push(SimAction::Dispatch {
                 vehicle_id: vid,
                 dest: chosen,
             });
+            crate::bench::TIME_PHASE2_SCHEDULE_NS.fetch_add(
+                crate::bench::elapsed_ns(t_p2s),
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
 
-        // Phase 3: emit Wait if nothing to do but work remains.
-        if actions.is_empty() {
-            let has_queued = self.queues.values().any(|q| !q.is_empty());
-            let has_pending = !state.pending.is_empty();
-
-            if has_queued || has_pending {
-                let next_vehicle_free = state
-                    .vehicles
-                    .iter()
-                    .filter(|v| v.available_at > state.time)
-                    .map(|v| v.available_at)
-                    .fold(f32::INFINITY, f32::min);
-
-                let next_release = state
-                    .pending
-                    .iter()
-                    .filter(|rid| !state.released.contains(rid))
-                    .filter_map(|rid| view.get(*rid))
-                    .map(|r| r.release_time)
-                    .fold(f32::INFINITY, f32::min);
-
-                let until = f32::min(next_vehicle_free, next_release);
-                if until.is_finite() && until > state.time {
-                    actions.push(SimAction::Wait { until });
-                }
-            }
-        }
+        self.last_time = state.time;
 
         actions
     }
@@ -427,17 +497,15 @@ pub fn composable_strategy(
     scheduler: &mut NativeSchedulingStrategy,
 ) -> NativeDispatchStrategy {
     NativeDispatchStrategy {
-        inner: Some(Box::new(ComposableStrategy {
-            router: router
+        inner: Some(Box::new(ComposableStrategy::new(
+            router
                 .inner
                 .take()
                 .expect("NativeRoutingStrategy already consumed"),
-            scheduler: scheduler
+            scheduler
                 .inner
                 .take()
                 .expect("NativeSchedulingStrategy already consumed"),
-            queues: HashMap::new(),
-            routed: HashSet::new(),
-        })),
+        ))),
     }
 }
