@@ -537,6 +537,105 @@ impl FlatGpTree {
             inner: FlatTree { ops: bytes },
         })
     }
+
+    // --- Python numeric/operator magic methods ---
+    fn __repr__(&self) -> String {
+        // simple repr: show opcode bytes hex
+        let s: Vec<String> = self
+            .inner
+            .ops
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        format!("FlatGpTree([{}])", s.join(" "))
+    }
+
+    fn __neg__(&self) -> FlatGpTree {
+        // -x => 0 - x
+        let zero = FlatTree::from_const(0.0);
+        FlatGpTree {
+            inner: FlatTree::binary(&zero, &self.inner, 1),
+        }
+    }
+
+    fn __add__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary(self, &other, 0)
+    }
+
+    fn __radd__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary_reversed(self, &other, 0)
+    }
+
+    fn __sub__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary(self, &other, 1)
+    }
+
+    fn __rsub__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary_reversed(self, &other, 1)
+    }
+
+    fn __mul__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary(self, &other, 2)
+    }
+
+    fn __rmul__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary_reversed(self, &other, 2)
+    }
+
+    fn __truediv__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary(self, &other, 3)
+    }
+
+    fn __rtruediv__(&self, other: Bound<'_, pyo3::PyAny>) -> pyo3::PyResult<FlatGpTree> {
+        coerce_and_binary_reversed(self, &other, 3)
+    }
+}
+
+// Helper: coerce Python operand to FlatGpTree (either a FlatGpTree or numeric -> const)
+fn coerce_and_binary(
+    left: &FlatGpTree,
+    other: &Bound<'_, pyo3::PyAny>,
+    op_id: u8,
+) -> pyo3::PyResult<FlatGpTree> {
+    if let Ok(rhs_ref) = other.extract::<pyo3::PyRef<FlatGpTree>>() {
+        return Ok(FlatGpTree {
+            inner: FlatTree::binary(&left.inner, &rhs_ref.inner, op_id),
+        });
+    }
+
+    if let Ok(v) = other.extract::<f64>() {
+        let rhs = FlatTree::from_const(v as f32);
+        return Ok(FlatGpTree {
+            inner: FlatTree::binary(&left.inner, &rhs, op_id),
+        });
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "unsupported operand type(s) for FlatGpTree operation",
+    ))
+}
+
+fn coerce_and_binary_reversed(
+    left: &FlatGpTree,
+    other: &Bound<'_, pyo3::PyAny>,
+    op_id: u8,
+) -> pyo3::PyResult<FlatGpTree> {
+    if let Ok(lhs_ref) = other.extract::<pyo3::PyRef<FlatGpTree>>() {
+        return Ok(FlatGpTree {
+            inner: FlatTree::binary(&lhs_ref.inner, &left.inner, op_id),
+        });
+    }
+
+    if let Ok(v) = other.extract::<f64>() {
+        let lhs = FlatTree::from_const(v as f32);
+        return Ok(FlatGpTree {
+            inner: FlatTree::binary(&lhs, &left.inner, op_id),
+        });
+    }
+
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "unsupported operand type(s) for FlatGpTree operation",
+    ))
 }
 
 impl FlatGpTree {
