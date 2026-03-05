@@ -656,13 +656,25 @@ impl FlatGpTree {
             let val = self.inner.eval_scalar_from_slice(&[]);
             return vec![val; ctxs.len()];
         }
+        let t_mat = std::time::Instant::now();
         let mut matrix: Vec<Vec<f32>> = vec![Vec::with_capacity(ctxs.len()); C::NUM_TERMINALS];
         for ctx in ctxs {
             for id in 0..C::NUM_TERMINALS as u8 {
                 matrix[id as usize].push(ctx.eval_terminal(id));
             }
         }
-        self.inner.eval_batch(&matrix)
+        crate::bench::TIME_MATRIX_BUILD_NS.fetch_add(
+            crate::bench::elapsed_ns(t_mat),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
+        let t_inner = std::time::Instant::now();
+        let result = self.inner.eval_batch(&matrix);
+        crate::bench::TIME_EVAL_BATCH_INNER_NS.fetch_add(
+            crate::bench::elapsed_ns(t_inner),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        result
     }
 }
 

@@ -47,16 +47,16 @@ impl PyDispatchStrategyAdapter {
 impl DispatchStrategy for PyDispatchStrategyAdapter {
     fn next_events(
         &mut self,
-        state: &SimulationSnapshot,
+        state: &SimulationSnapshot<'_>,
         view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
         Python::attach(|py| {
             let state_dict = snapshot_to_py_dict(py, state)
                 .expect("failed to build state dict for Python strategy");
             let mut available_ids = HashSet::new();
-            available_ids.extend(&state.pending);
-            available_ids.extend(&state.served);
-            available_ids.extend(&state.rejected);
+            available_ids.extend(state.pending.iter().copied());
+            available_ids.extend(state.served.iter().copied());
+            available_ids.extend(state.rejected.iter().copied());
 
             let view_dict = instance_view_to_py_dict(py, view, available_ids)
                 .expect("failed to build view dict for Python strategy");
@@ -154,7 +154,7 @@ pub fn instance_view_to_py_dict(
 ///
 /// This mirrors the old `build_py_state` but is only called inside
 /// [`PyStrategyAdapter`] — native strategies never hit this code.
-pub fn snapshot_to_py_dict(py: Python, state: &SimulationSnapshot) -> PyResult<Py<PyAny>> {
+pub fn snapshot_to_py_dict(py: Python, state: &SimulationSnapshot<'_>) -> PyResult<Py<PyAny>> {
     let d = PyDict::new(py);
 
     d.set_item("time", state.time as f64)?;
@@ -170,7 +170,7 @@ pub fn snapshot_to_py_dict(py: Python, state: &SimulationSnapshot) -> PyResult<P
 
     // vehicles: list of dicts
     let vehicles_list = PyList::empty(py);
-    for v in &state.vehicles {
+    for v in state.vehicles {
         let vd = PyDict::new(py);
         vd.set_item("vehicle_id", v.vehicle_id)?;
         vd.set_item("position", v.position.0)?;

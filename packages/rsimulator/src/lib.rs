@@ -29,6 +29,7 @@
 /// Python strategies fall back to [`PyStrategyAdapter`] which acquires the GIL
 /// only for the strategy call, concentrating all serialisation overhead in one
 /// place.
+pub mod bench;
 pub mod instance;
 mod py_bridge;
 mod simulator;

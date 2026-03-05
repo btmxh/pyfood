@@ -40,7 +40,7 @@ impl DispatchStrategy for GreedyRustStrategy {
 
     fn next_events(
         &mut self,
-        state: &SimulationSnapshot,
+        state: &SimulationSnapshot<'_>,
         view: &InstanceView<'_>,
     ) -> Vec<SimAction> {
         if state.pending.is_empty() {
