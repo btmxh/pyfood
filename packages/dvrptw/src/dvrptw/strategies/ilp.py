@@ -559,23 +559,25 @@ class ILPStrategy(PythonDispatchStrategy):
             self._dispatched.add(node_id)
             plan.advance()
 
-        # If no actions and there are pending requests, emit a WaitEvent so the
-        # simulator wakes us up at the next relevant time.  Only consider
-        # candidate times strictly in the future (>
-        # state.time) to avoid producing invalid WaitEvents.
-        if not actions:
-            candidates: list[float] = []
-            if earliest_next_event is not None and earliest_next_event > state.time:
-                candidates.append(earliest_next_event)
-            # Wake up when the next vehicle becomes idle
-            busy_times = [
-                v.available_at for v in state.vehicles if v.available_at > state.time
-            ]
-            if busy_times:
-                candidates.append(min(busy_times))
-            if candidates:
-                until = min(candidates)
-                if until > state.time:
-                    actions.append(WaitEvent(until_time=until))
+        # Emit a WaitEvent so the simulator wakes us at the next relevant
+        # time.  This is needed even when other actions (dispatches) were
+        # already queued: a dispatched vehicle may complete later than the
+        # planned departure of another vehicle, so we must explicitly
+        # schedule a wake-up for the earliest future event.  Only consider
+        # candidate times strictly in the future (> state.time) to avoid
+        # producing invalid WaitEvents.
+        candidates: list[float] = []
+        if earliest_next_event is not None and earliest_next_event > state.time:
+            candidates.append(earliest_next_event)
+        # Wake up when the next vehicle becomes idle
+        busy_times = [
+            v.available_at for v in state.vehicles if v.available_at > state.time
+        ]
+        if busy_times:
+            candidates.append(min(busy_times))
+        if candidates:
+            until = min(candidates)
+            if until > state.time:
+                actions.append(WaitEvent(until_time=until))
 
         return actions
