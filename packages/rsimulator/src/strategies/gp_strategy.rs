@@ -16,7 +16,7 @@
 ///
 /// All three currently expose the same 8 terminals (IDs 0–7) but are defined
 /// independently so their terminal sets can diverge without coupling.
-use std::collections::{HashMap, HashSet};
+use crate::hashmap::{Map as HashMap, Set as HashSet};
 
 use pyo3::prelude::*;
 
@@ -355,8 +355,8 @@ pub fn gp_batch_strategy(
             slot_size,
             next_slot_end: slot_size,
             buffer: Vec::new(),
-            seen: HashSet::new(),
-            queues: HashMap::new(),
+            seen: HashSet::default(),
+            queues: HashMap::default(),
         })),
     }
 }

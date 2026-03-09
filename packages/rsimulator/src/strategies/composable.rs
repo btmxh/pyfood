@@ -1,3 +1,4 @@
+use crate::hashmap::{Map as HashMap, Set as HashSet};
 /// composable.rs — ComposableStrategy: per-request router + scheduler template.
 ///
 /// # Contents
@@ -5,7 +6,7 @@
 /// - [`PySchedulingAdapter`] — wraps a Python scheduler as `Box<dyn SchedulingStrategy>`
 /// - [`ComposableStrategy`]  — `RustStrategy` impl combining router + scheduler
 /// - [`composable_strategy`] — `#[pyfunction]` factory
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use pyo3::prelude::*;
 
@@ -184,10 +185,10 @@ impl ComposableStrategy {
         Self {
             router,
             scheduler,
-            queues: HashMap::new(),
-            routed: HashSet::new(),
+            queues: HashMap::default(),
+            routed: HashSet::default(),
             queued_loads: Vec::new(),
-            vehicle_id_to_index: HashMap::new(),
+            vehicle_id_to_index: HashMap::default(),
             last_time: 0.0,
             next_release_idx: 0,
         }

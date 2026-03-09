@@ -1,3 +1,4 @@
+use crate::hashmap::{Map as HashMap, Set as HashSet};
 /// batch.rs — BatchComposableStrategy: slot-based batch router + scheduler.
 ///
 /// # Contents
@@ -20,7 +21,7 @@
 ///    [`super::composable::ComposableStrategy`]).
 /// 4. Emit a Wait if nothing to do but work remains, targeting the earlier of the
 ///    next slot boundary, next vehicle free time, or next pending release.
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -348,8 +349,8 @@ pub fn batch_composable_strategy(
             slot_size: slot_size_f32,
             next_slot_end: slot_size_f32,
             buffer: Vec::new(),
-            seen: HashSet::new(),
-            queues: HashMap::new(),
+            seen: HashSet::default(),
+            queues: HashMap::default(),
         })),
     }
 }

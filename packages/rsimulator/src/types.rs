@@ -8,7 +8,7 @@
 /// - [`SimulationSnapshot`]     — zero-copy borrowed view of simulator state
 /// - [`NativeDispatchStrategy`] — `#[pyclass]` box around `Box<dyn DispatchStrategy>`
 /// - [`NativeEventCallback`]    — `#[pyclass]` box around `Box<dyn EventCallback>`
-use std::collections::HashSet;
+use crate::hashmap::Set as HashSet;
 
 use pyo3::prelude::*;
 

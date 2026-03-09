@@ -1,3 +1,4 @@
+use crate::hashmap::Map as HashMap;
 /// instance.rs — Domain data types, event queue primitives, and strategy traits.
 ///
 /// # Contents
@@ -12,7 +13,6 @@
 /// - [`DispatchStrategy`] — trait for native dispatching strategies
 /// - [`EventCallback`]   — trait for native action callbacks
 use std::cmp::Ordering;
-use std::collections::HashMap;
 
 use crate::types::{RequestId, SimAction, SimulationSnapshot};
 

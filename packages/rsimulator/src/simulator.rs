@@ -1,3 +1,4 @@
+use crate::hashmap::{Map as HashMap, Set as HashSet};
 /// simulator.rs — The main PyO3-exposed `Simulator` struct and its impl blocks.
 ///
 /// # Architecture
@@ -18,7 +19,7 @@
 /// place behind the [`RustStrategy`] trait.
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::BinaryHeap;
 
 use crate::instance::{DispatchStrategy, Event, EventCallback, EventKind, InstanceView, MinEvent};
 use crate::py_bridge::{extract_request, extract_vehicle_spec};
@@ -94,7 +95,7 @@ impl Simulator {
         // Extract requests
         let py_requests = instance.getattr("requests")?;
         let py_requests_list = py_requests.cast::<PyList>()?;
-        let mut requests: HashMap<RequestId, crate::instance::Request> = HashMap::new();
+        let mut requests: HashMap<RequestId, crate::instance::Request> = HashMap::default();
         for item in py_requests_list.iter() {
             let req = extract_request(&item)?;
             requests.insert(req.id, req);
@@ -156,7 +157,7 @@ impl Simulator {
             .sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         // Pre-populate released_set for requests that are already available at t=0.
-        let mut released_set: HashSet<RequestId> = HashSet::new();
+        let mut released_set: HashSet<RequestId> = HashSet::default();
         let mut released_cursor: usize = 0;
         while released_cursor < sorted_releases.len() && sorted_releases[released_cursor].0 <= 0.0 {
             released_set.insert(sorted_releases[released_cursor].1);
@@ -215,9 +216,9 @@ impl Simulator {
             time: 0.0_f32,
             vehicles,
             pending_requests,
-            served_requests: HashSet::new(),
-            rejected_requests: HashSet::new(),
-            being_served: HashSet::new(),
+            served_requests: HashSet::default(),
+            rejected_requests: HashSet::default(),
+            being_served: HashSet::default(),
             event_queue,
             sorted_releases,
             sorted_tw_latest,

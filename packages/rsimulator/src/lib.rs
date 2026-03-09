@@ -30,6 +30,7 @@
 /// only for the strategy call, concentrating all serialisation overhead in one
 /// place.
 pub mod bench;
+pub mod hashmap;
 pub mod instance;
 mod py_bridge;
 mod simulator;

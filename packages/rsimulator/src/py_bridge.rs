@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::hashmap::Set as HashSet;
 
 /// py_bridge.rs — All PyO3 glue code: Python ↔ Rust adapters and helpers.
 ///
@@ -53,7 +53,7 @@ impl DispatchStrategy for PyDispatchStrategyAdapter {
         Python::attach(|py| {
             let state_dict = snapshot_to_py_dict(py, state)
                 .expect("failed to build state dict for Python strategy");
-            let mut available_ids = HashSet::new();
+            let mut available_ids: HashSet<RequestId> = HashSet::default();
             available_ids.extend(state.pending.iter().copied());
             available_ids.extend(state.served.iter().copied());
             available_ids.extend(state.rejected.iter().copied());
