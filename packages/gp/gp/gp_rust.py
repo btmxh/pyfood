@@ -18,6 +18,7 @@ operate on the compact opcode bytes exposed by `FlatGpTree.ops`.
 from __future__ import annotations
 
 import random
+import math
 from typing import Callable
 
 import rsimulator as rs
@@ -53,6 +54,19 @@ def random_subtree_range(ops: bytes) -> tuple[int, int]:
     return (start, end)
 
 
+def all_subtree_ranges(ops: bytes) -> list[tuple[int, int]]:
+    """Return a list of all (start, end) subtree ranges for `ops`.
+
+    Each subtree is identified by the index of its last token `end` and the
+    corresponding start found via `subtree_start`.
+    """
+    ranges: list[tuple[int, int]] = []
+    for end in range(len(ops)):
+        start = subtree_start(ops, end)
+        ranges.append((start, end))
+    return ranges
+
+
 def splice(ops: bytes, a_start: int, a_end: int, replacement: bytes) -> bytes:
     return ops[:a_start] + replacement + ops[a_end + 1 :]
 
@@ -74,20 +88,58 @@ def init_population(pop_size: int, max_depth: int) -> list[Individual]:
     return [make_individual(1 + (i % max_depth)) for i in range(pop_size)]
 
 
-def subtree_crossover(a: rs.FlatGpTree, b: rs.FlatGpTree) -> rs.FlatGpTree:
+def subtree_crossover(
+    a: rs.FlatGpTree,
+    b: rs.FlatGpTree,
+    max_nodes: int,
+    make_tree_fn: Callable[[int], rs.FlatGpTree],
+) -> rs.FlatGpTree | None:
+    """Crossover a subtree from `b` into `a` while respecting `max_nodes`.
+
+    If no valid replacement subtree fits the budget, returns `None` to signal
+    the caller that this crossover attempt failed.
+    """
     a_ops: bytes = a.ops
     b_ops: bytes = b.ops
+
     a_s, a_e = random_subtree_range(a_ops)
-    b_s, b_e = random_subtree_range(b_ops)
-    child_ops = splice(a_ops, a_s, a_e, b_ops[b_s : b_e + 1])
+    # context size = nodes remaining in `a` after removing the selected subtree
+    context_size = len(a_ops) - (a_e - a_s + 1)
+    budget = max_nodes - context_size
+    if budget < 1:
+        return None
+
+    # find all b-subtrees that fit into the budget
+    candidates = [r for r in all_subtree_ranges(b_ops) if (r[1] - r[0] + 1) <= budget]
+    if candidates:
+        b_s, b_e = random.choice(candidates)
+        replacement = b_ops[b_s : b_e + 1]
+    else:
+        # no subtree of b fits; create a small fresh tree that fits
+        # derive the maximum full-tree depth that fits in `budget`
+        max_d = max(0, int(math.floor(math.log2(budget + 1))) - 1)
+        replacement = make_tree_fn(max_d).to_bytes()
+
+    child_ops = splice(a_ops, a_s, a_e, replacement)
     return rs.FlatGpTree.from_bytes(child_ops)
 
 
-def crossover_individual(parent_a: Individual, parent_b: Individual) -> Individual:
-    # crossover per-role
-    r = subtree_crossover(parent_a[0], parent_b[0])
-    s = subtree_crossover(parent_a[1], parent_b[1])
-    rej = subtree_crossover(parent_a[2], parent_b[2])
+def crossover_individual(
+    parent_a: Individual,
+    parent_b: Individual,
+    max_nodes: int,
+    make_tree_fn: Callable[[int], rs.FlatGpTree],
+) -> Individual | None:
+    # crossover per-role; return None if any role fails to produce a child
+    r = subtree_crossover(parent_a[0], parent_b[0], max_nodes, make_tree_fn)
+    if r is None:
+        return None
+    s = subtree_crossover(parent_a[1], parent_b[1], max_nodes, make_tree_fn)
+    if s is None:
+        return None
+    rej = subtree_crossover(parent_a[2], parent_b[2], max_nodes, make_tree_fn)
+    if rej is None:
+        return None
     return (r, s, rej)
 
 
@@ -95,6 +147,7 @@ def mutate_individual(
     ind: Individual,
     max_subtree_depth: int,
     make_tree_fn: Callable[[int], rs.FlatGpTree],
+    max_nodes: int,
 ) -> Individual:
     # pick a role to mutate
     role = random.randrange(3)
@@ -102,7 +155,16 @@ def mutate_individual(
     # reuse engine mutation logic: replace a random subtree with a new small tree
     ops = trees[role].ops
     s, e = random_subtree_range(ops)
-    replacement = make_tree_fn(random.randint(0, max_subtree_depth)).to_bytes()
+    # compute budget after removing selected subtree
+    context_size = len(ops) - (e - s + 1)
+    budget = max_nodes - context_size
+    if budget < 1:
+        return ind
+
+    # derive a depth that fits in the budget, and respect requested max_subtree_depth
+    max_d = max(0, int(math.floor(math.log2(budget + 1))) - 1)
+    chosen_d = min(max_subtree_depth, max_d)
+    replacement = make_tree_fn(chosen_d).to_bytes()
     new_ops = splice(ops, s, e, replacement)
     trees[role] = rs.FlatGpTree.from_bytes(new_ops)
     return tuple(trees)  # type: ignore[return-value]
@@ -142,6 +204,7 @@ def run_gp_rust(
     elitism: int = 1,
     evaluator: Evaluator | None = None,
     make_tree_fn: Callable[[int], rs.FlatGpTree] | None = None,
+    max_nodes: int | None = None,
 ) -> tuple[Individual, tuple[float, int], list[dict]]:
     """Evolve GP trees where fitness is a DVRPTW simulation result.
 
@@ -151,6 +214,7 @@ def run_gp_rust(
     """
     if evaluator is None:
         evaluator = StarNormEvaluator.from_instance(0.5, 0.5, instance)
+    assert evaluator is not None
 
     if make_tree_fn is None:
 
@@ -158,8 +222,20 @@ def run_gp_rust(
             return make_grow(d) if random.random() < 0.5 else make_full(d)
 
         make_tree_fn = _mk
+    assert make_tree_fn is not None
 
     pop = init_population(pop_size, max_depth)
+
+    # derive max_nodes if not provided: size of a full binary tree at max_depth
+    if max_nodes is None:
+        max_nodes_val = 2 ** (max_depth + 1) - 1
+    else:
+        max_nodes_val = int(max_nodes)
+
+    # simple sanity check and ensure concrete int for downstream calls
+    if max_nodes_val < 1:
+        raise ValueError("max_nodes must be >= 1")
+    max_nodes_int: int = int(max_nodes_val)
 
     best_ind: Individual = pop[0]
     best_scalar = float("inf")
@@ -200,17 +276,40 @@ def run_gp_rust(
             "mean_rej": mean_rej,
         }
         history.append(gen_best)
+        # print concise generation progress info
+        try:
+            print(
+                f"Gen {gen}: best_scalar={gen_best['best_scalar']:.6g} "
+                f"best_cost={gen_best['best_cost']:.6g} best_rej={gen_best['best_rej']} "
+                f"mean_scalar={gen_best['mean_scalar']:.6g}"
+            )
+        except Exception:
+            # protect GA loop from any unforeseen formatting errors
+            print("Gen", gen, "(progress)")
 
         while len(new_pop) < pop_size:
             if random.random() < crossover_rate:
-                a = tournament_select_by_scalar(pop, scalars, tournament_k)
-                b = tournament_select_by_scalar(pop, scalars, tournament_k)
-                child = crossover_individual(a, b)
+                # attempt crossover, retrying with new parents up to N times
+                max_parent_retries = 5
+                child = None
+                attempts = 0
+                a = None
+                b = None
+                while attempts < max_parent_retries and child is None:
+                    a = tournament_select_by_scalar(pop, scalars, tournament_k)
+                    b = tournament_select_by_scalar(pop, scalars, tournament_k)
+                    child = crossover_individual(a, b, max_nodes_int, make_tree_fn)
+                    attempts += 1
+                if child is None:
+                    # fallback: clone the last selected parent `a` (ensure a is set)
+                    if a is None:
+                        a = tournament_select_by_scalar(pop, scalars, tournament_k)
+                    child = a
             else:
                 child = tournament_select_by_scalar(pop, scalars, tournament_k)
 
             if random.random() < mutation_rate:
-                child = mutate_individual(child, max_depth, make_tree_fn)
+                child = mutate_individual(child, max_depth, make_tree_fn, max_nodes_int)
 
             new_pop.append(child)
 

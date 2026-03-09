@@ -7,6 +7,7 @@ invoked from the `gp` package directly (for example
 """
 
 from __future__ import annotations
+from dvrptw import StarNormEvaluator
 
 import argparse
 import csv
@@ -22,8 +23,10 @@ def main() -> None:
     p.add_argument("--pop", type=int, default=12)
     p.add_argument("--gen", type=int, default=6)
     p.add_argument("--depth", type=int, default=3)
+    p.add_argument("--max-nodes", type=int, default=None)
     p.add_argument("--out-csv", default="gp_history.csv")
     p.add_argument("--out-png", default="gp_history.png")
+    p.add_argument("--weight", type=float, default=0.5)
     args = p.parse_args()
 
     print("Loading instance:", args.instance)
@@ -40,6 +43,10 @@ def main() -> None:
         pop_size=args.pop,
         generations=args.gen,
         max_depth=args.depth,
+        max_nodes=args.max_nodes,
+        evaluator=StarNormEvaluator.from_instance(
+            args.weight, 1 - args.weight, instance
+        ),
     )
 
     print("Best objective (travel_cost, rejected):", best_obj)
