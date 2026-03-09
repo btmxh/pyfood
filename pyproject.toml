@@ -2,7 +2,14 @@
 name = "pyfood"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["rsimulator", "dvrptw", "gp", "tqdm", "pulp>=3.3.0"]
+dependencies = [
+  "rsimulator",
+  "dvrptw",
+  "gp",
+  "tqdm",
+  "pulp>=3.3.0",
+  "ortools>=9.15.6755",
+]
 
 [tool.uv.sources]
 rsimulator = { workspace = true }
