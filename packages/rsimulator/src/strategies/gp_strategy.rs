@@ -27,6 +27,7 @@ use crate::strategies::{
 use crate::types::{NativeDispatchStrategy, RequestId, VehicleSnapshot};
 
 use super::gp_tree::{EvalContext, FlatGpTree, RoleContext};
+use crate::instance::InstanceLimits;
 
 // ---------------------------------------------------------------------------
 // Role-specific context types
@@ -78,6 +79,7 @@ fn make_ctx<'a>(
     current_time: f32,
     speed: f32,
     vehicle_capacity: f32,
+    bounds: &'a InstanceLimits,
 ) -> EvalContext<'a> {
     let (vx, vy) = view
         .get(vehicle.position)
@@ -91,6 +93,7 @@ fn make_ctx<'a>(
         vehicle_capacity,
         vehicle_pos_x: vx,
         vehicle_pos_y: vy,
+        bounds: Some(bounds),
     }
 }
 
@@ -119,10 +122,13 @@ fn route_one(
     let request = view.get(rid)?;
     let (speed, capacity) = view_vehicle_params(view);
 
+    // Bounds are pre-computed once per instance and stored in InstanceView.
+    let bounds = &view.limits;
+
     let t_mkctx = std::time::Instant::now();
     let routing_ctxs: Vec<RoutingCtx<'_>> = vehicles
         .iter()
-        .map(|v| RoutingCtx(make_ctx(request, v, view, time, speed, capacity)))
+        .map(|v| RoutingCtx(make_ctx(request, v, view, time, speed, capacity, bounds)))
         .collect();
     crate::bench::TIME_MAKE_CTX_NS.fetch_add(
         crate::bench::elapsed_ns(t_mkctx),
@@ -158,6 +164,7 @@ fn route_one(
         time,
         speed,
         capacity,
+        bounds,
     ));
     crate::bench::TIME_ROUTE_ONE_MAKE_REJECT_NS.fetch_add(
         crate::bench::elapsed_ns(t_mkr),
@@ -268,13 +275,16 @@ impl SchedulingStrategy for GpSchedulingStrategy {
 
         let (speed, capacity) = view_vehicle_params(view);
 
+        // Bounds are pre-computed once per instance and stored in InstanceView.
+        let bounds = &view.limits;
+
         let mut valid_requests = Vec::new();
         let mut ctxs: Vec<SequencingCtx<'_>> = Vec::new();
 
         for &rid in queue {
             if let Some(request) = view.get(rid) {
                 ctxs.push(SequencingCtx(make_ctx(
-                    request, vehicle, view, time, speed, capacity,
+                    request, vehicle, view, time, speed, capacity, bounds,
                 )));
                 valid_requests.push(rid);
             }

@@ -37,7 +37,7 @@
 /// | 7 `ReleaseTime`       | Request release time                           |
 use pyo3::prelude::*;
 
-use crate::instance::Request;
+use crate::instance::{InstanceLimits, Request};
 use crate::types::VehicleSnapshot;
 
 // ---------------------------------------------------------------------------
@@ -108,6 +108,9 @@ pub struct EvalContext<'a> {
     pub vehicle_capacity: f32,
     pub vehicle_pos_x: f32,
     pub vehicle_pos_y: f32,
+    /// Optional normalization bounds. When `Some`, terminal values are divided
+    /// by their characteristic instance-level scale factor before returning.
+    pub bounds: Option<&'a InstanceLimits>,
 }
 
 impl EvalContext<'_> {
@@ -118,9 +121,12 @@ impl EvalContext<'_> {
     }
 
     /// Extract a terminal value by its flat terminal_id (0..=7), returned as f32.
+    ///
+    /// If `self.bounds` is set, the raw value is divided by its characteristic
+    /// scale factor before returning (normalization to a common unit).
     #[inline(always)]
     pub fn terminal_value(&self, id: u8) -> f32 {
-        match id {
+        let raw = match id {
             0 => {
                 let dx = self.vehicle_pos_x - self.request.x;
                 let dy = self.vehicle_pos_y - self.request.y;
@@ -139,6 +145,10 @@ impl EvalContext<'_> {
             6 => self.vehicle_capacity - self.vehicle.current_load,
             7 => self.request.release_time,
             _ => 0.0,
+        };
+        match self.bounds {
+            Some(b) => b.normalize(id, raw),
+            None => raw,
         }
     }
 }
@@ -963,6 +973,7 @@ mod tests {
             vehicle_capacity: 10.0,
             vehicle_pos_x: 0.0,
             vehicle_pos_y: 0.0,
+            bounds: None,
         };
 
         let got = flat.eval_scalar(&ctx);

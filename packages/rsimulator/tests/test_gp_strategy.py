@@ -489,5 +489,66 @@ class TestFlatGpTravelTimeRouting(unittest.TestCase):
         self.assertTrue(math.isfinite(result.metrics.total_travel_cost))
 
 
+class TestGpTerminalNormalization(unittest.TestCase):
+    """Terminals are normalized to a common unit scale derived from the instance.
+
+    Scale factors:
+      TravelTime        → max_travel_time = bounding-box diagonal / speed
+      WindowEarliest/Latest, TimeUntilDue, ReleaseTime → planning_horizon
+      Demand, CurrentLoad, RemainingCapacity           → vehicle_capacity
+    """
+
+    def test_travel_time_at_max_distance_is_one(self):
+        """Travel time to the farthest node normalizes to ≈ 1.0.
+
+        Instance: depot (0,0), single request at (3,4), speed=1.
+        Bounding-box diagonal = sqrt(3²+4²) = 5.  max_travel_time = 5/1 = 5.
+        Normalized travel_time = 5/5 = 1.0.
+
+        reject_const = 1.5 > routing = 1.0  →  request rejected (1 rejection).
+        """
+        from rsimulator import flat_gp_const, flat_gp_travel_time, gp_strategy
+
+        strategy = gp_strategy(
+            flat_gp_travel_time(), flat_gp_const(0.0), flat_gp_const(1.5)
+        )
+        inst = _make_single_request_instance()
+        result = RustSimulator(inst, strategy).run()
+        self.assertEqual(result.metrics.rejected, 1)
+
+    def test_travel_time_below_threshold_accepts(self):
+        """reject_const = 0.5 < normalized_travel_time ≈ 1.0  →  accepted."""
+        from rsimulator import flat_gp_const, flat_gp_travel_time, gp_strategy
+
+        strategy = gp_strategy(
+            flat_gp_travel_time(), flat_gp_const(0.0), flat_gp_const(0.5)
+        )
+        inst = _make_single_request_instance()
+        result = RustSimulator(inst, strategy).run()
+        self.assertEqual(result.metrics.rejected, 0)
+
+    def test_sequencing_order_preserved_after_normalization(self):
+        """Normalization is monotone; urgency ordering is preserved.
+
+        req1 deadline=50, req2 deadline=200.  After dividing by planning_horizon,
+        relative order of TimeUntilDue is unchanged  →  urgency test still holds.
+        """
+        from rsimulator import (
+            flat_gp_const,
+            flat_gp_sub,
+            flat_gp_time_until_due,
+            gp_strategy,
+        )
+
+        sequencing = flat_gp_sub(flat_gp_const(0.0), flat_gp_time_until_due())
+        strategy = gp_strategy(flat_gp_const(1.0), sequencing, flat_gp_const(0.0))
+        inst = _make_urgency_instance()
+        result = RustSimulator(inst, strategy).run()
+
+        served = {r for route in result.solution.routes for r in route}
+        self.assertEqual(served, {1, 2})
+        self.assertEqual(result.solution.routes[0][0], 1)  # most urgent first
+
+
 if __name__ == "__main__":
     unittest.main()

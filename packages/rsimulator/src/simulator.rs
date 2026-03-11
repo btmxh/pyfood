@@ -21,7 +21,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::BinaryHeap;
 
-use crate::instance::{DispatchStrategy, Event, EventCallback, EventKind, InstanceView, MinEvent};
+use crate::instance::{
+    DispatchStrategy, Event, EventCallback, EventKind, InstanceLimits, InstanceView, MinEvent,
+};
 use crate::py_bridge::{extract_request, extract_vehicle_spec};
 use crate::types::VehicleState;
 use crate::types::{
@@ -38,6 +40,9 @@ pub struct Simulator {
     requests: HashMap<RequestId, crate::instance::Request>,
     vehicle_specs: Vec<crate::instance::VehicleSpec>,
     depot_id: RequestId,
+    /// Pre-computed normalization scale factors — derived once from the static
+    /// instance data and passed by copy into every `InstanceView`.
+    instance_limits: InstanceLimits,
 
     // O(1) vehicle lookup by id
     vehicle_index: HashMap<i64, usize>,
@@ -186,6 +191,9 @@ impl Simulator {
                 )
             })?;
 
+        // Compute normalization scale factors once from the static instance data.
+        let instance_limits = InstanceLimits::from_data(&requests, &vehicle_specs);
+
         // Call the strategy initializer so native strategies (and adapters)
         // can cache instance data before the simulation loop starts.
         // This mirrors the documented DispatchStrategy::initialize hook.
@@ -194,6 +202,7 @@ impl Simulator {
             vehicles: &vehicle_specs,
             ascending_release: &sorted_releases,
             depot_id,
+            limits: instance_limits,
         };
         strategy.initialize(&init_view);
 
@@ -212,6 +221,7 @@ impl Simulator {
             requests,
             vehicle_specs,
             depot_id,
+            instance_limits,
             vehicle_index,
             time: 0.0_f32,
             vehicles,
@@ -248,6 +258,7 @@ impl Simulator {
             vehicles: &self.vehicle_specs,
             ascending_release: &self.sorted_releases,
             depot_id: self.depot_id,
+            limits: self.instance_limits,
         });
 
         loop {
@@ -284,6 +295,7 @@ impl Simulator {
                     vehicles: &self.vehicle_specs,
                     ascending_release: &self.sorted_releases,
                     depot_id: self.depot_id,
+                    limits: self.instance_limits,
                 },
             );
             crate::bench::TIME_STRATEGY_NS.fetch_add(

@@ -102,6 +102,91 @@ impl Ord for MinEvent {
 }
 
 // ---------------------------------------------------------------------------
+// InstanceLimits
+// ---------------------------------------------------------------------------
+
+/// Instance-derived scale factors for normalizing GP terminal values.
+///
+/// Computed once from static instance data (positions, time windows, vehicle
+/// specs) and stored in [`InstanceView`] so every strategy call shares the same
+/// normalization without re-scanning the instance.
+#[derive(Debug, Clone, Copy)]
+pub struct InstanceLimits {
+    /// Bounding-box diagonal / speed — characteristic travel-time scale.
+    pub max_travel_time: f32,
+    /// Maximum `time_window.latest` across all requests — time scale.
+    pub planning_horizon: f32,
+    /// First vehicle's capacity — load/demand scale.
+    pub vehicle_capacity: f32,
+}
+
+impl InstanceLimits {
+    /// Compute limits in a single O(|requests|) pass over the raw instance data.
+    pub fn from_data(
+        requests: &HashMap<RequestId, Request>,
+        vehicle_specs: &[VehicleSpec],
+    ) -> Self {
+        let (speed, capacity) = vehicle_specs
+            .first()
+            .map(|vs| (vs.speed, vs.capacity))
+            .unwrap_or((1.0, 1.0));
+
+        let mut xmin = f32::INFINITY;
+        let mut xmax = f32::NEG_INFINITY;
+        let mut ymin = f32::INFINITY;
+        let mut ymax = f32::NEG_INFINITY;
+        let mut max_latest = 1.0_f32;
+        for req in requests.values() {
+            xmin = xmin.min(req.x);
+            xmax = xmax.max(req.x);
+            ymin = ymin.min(req.y);
+            ymax = ymax.max(req.y);
+            max_latest = max_latest.max(req.time_window.latest);
+        }
+
+        let max_dist = ((xmax - xmin).powi(2) + (ymax - ymin).powi(2)).sqrt();
+        let max_travel_time = if speed > 0.0 {
+            (max_dist / speed).max(1.0)
+        } else {
+            1.0
+        };
+        let vehicle_capacity = if capacity.is_finite() && capacity > 0.0 {
+            capacity
+        } else {
+            1.0
+        };
+
+        InstanceLimits {
+            max_travel_time,
+            planning_horizon: max_latest,
+            vehicle_capacity,
+        }
+    }
+
+    /// Normalize a raw terminal value by its characteristic scale.
+    ///
+    /// Terminal IDs:
+    ///   0 → TravelTime        / max_travel_time
+    ///   1 → WindowEarliest    / planning_horizon
+    ///   2 → WindowLatest      / planning_horizon
+    ///   3 → TimeUntilDue      / planning_horizon
+    ///   4 → Demand            / vehicle_capacity
+    ///   5 → CurrentLoad       / vehicle_capacity
+    ///   6 → RemainingCapacity / vehicle_capacity
+    ///   7 → ReleaseTime       / planning_horizon
+    #[inline(always)]
+    pub fn normalize(&self, terminal_id: u8, raw: f32) -> f32 {
+        let scale = match terminal_id {
+            0 => self.max_travel_time,
+            1 | 2 | 3 | 7 => self.planning_horizon,
+            4..=6 => self.vehicle_capacity,
+            _ => return raw,
+        };
+        raw / scale
+    }
+}
+
+// ---------------------------------------------------------------------------
 // InstanceView
 // ---------------------------------------------------------------------------
 
@@ -110,6 +195,9 @@ pub struct InstanceView<'a> {
     pub(crate) ascending_release: &'a [(f32, RequestId)],
     pub(crate) vehicles: &'a [VehicleSpec],
     pub(crate) depot_id: RequestId,
+    /// Pre-computed normalization scale factors — computed once per instance
+    /// so strategies pay no per-call overhead.
+    pub limits: InstanceLimits,
 }
 
 impl<'a> InstanceView<'a> {
