@@ -198,7 +198,7 @@ class TestGpStrategyAcceptAll(unittest.TestCase):
         inst = _make_single_request_instance()
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1})
         self.assertEqual(result.metrics.rejected, 0)
 
@@ -211,7 +211,7 @@ class TestGpStrategyAcceptAll(unittest.TestCase):
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
         self.assertEqual(result.metrics.rejected, 0)
 
@@ -257,7 +257,7 @@ class TestGpStrategyRejectAll(unittest.TestCase):
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, set())
         self.assertEqual(result.metrics.rejected, 2)
 
@@ -287,7 +287,7 @@ class TestGpStrategySequencing(unittest.TestCase):
         result = RustSimulator(inst, strategy).run()
 
         # Both must be served
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
         # req1 (more urgent) dispatched first
         self.assertEqual(result.solution.routes[0][0], 1)
@@ -301,7 +301,7 @@ class TestGpStrategySequencing(unittest.TestCase):
         inst = _make_urgency_instance()
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
         # req2 (less urgent, larger TimeUntilDue) dispatched first
         self.assertEqual(result.solution.routes[0][0], 2)
@@ -465,7 +465,7 @@ class TestFlatGpTravelTimeRouting(unittest.TestCase):
         inst = _make_basic_instance()
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
         self.assertEqual(result.metrics.rejected, 0)
 

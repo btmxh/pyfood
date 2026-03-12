@@ -251,6 +251,7 @@ impl DispatchStrategy for ComposableStrategy {
             if vehicle.available_at > state.time {
                 continue;
             }
+
             // get mutable queue for this vehicle
             let queue = match self.queues.get_mut(&vid) {
                 Some(q) if !q.is_empty() => q,
@@ -260,18 +261,20 @@ impl DispatchStrategy for ComposableStrategy {
             // Phase 2a: filter out infeasible requests from the queue BEFORE
             // calling the scheduler. A request is infeasible if, when dispatched
             // now from the vehicle's current position, its service_start would
-            // exceed its time-window latest, or if it would violate capacity.
+            // exceed its time-window latest. Capacity is NOT checked here —
+            // the demand-check-before-dispatch logic handles multi-trip depot
+            // returns for capacity-exceeded requests.
             let mut retained_queue: VecDeque<RequestId> = VecDeque::new();
             let mut infeasible: Vec<RequestId> = Vec::new();
             for &rid in queue.iter() {
                 if let Some(req) = view.get(rid) {
                     // find vehicle spec for this vehicle id
-                    let (speed, capacity) = view
+                    let speed = view
                         .vehicle_specs()
                         .iter()
                         .find(|vs| vs.id == vehicle.vehicle_id)
-                        .map(|vs| (vs.speed, vs.capacity))
-                        .unwrap_or((1.0_f32, f32::INFINITY));
+                        .map(|vs| vs.speed)
+                        .unwrap_or(1.0_f32);
 
                     // from position -> request distance
                     if let Some(from_req) = view.get(vehicle.position) {
@@ -286,13 +289,7 @@ impl DispatchStrategy for ComposableStrategy {
                         let arrival = state.time + travel_time;
                         let service_start = arrival.max(req.time_window.earliest);
 
-                        let capacity_ok = if req.is_depot {
-                            true
-                        } else {
-                            vehicle.current_load + req.demand <= capacity
-                        };
-
-                        if service_start > req.time_window.latest || !capacity_ok {
+                        if service_start > req.time_window.latest {
                             infeasible.push(rid);
                         } else {
                             retained_queue.push_back(rid);
@@ -315,7 +312,6 @@ impl DispatchStrategy for ComposableStrategy {
                 actions.push(SimAction::Reject { request_id: *rid });
             }
 
-            // If nothing feasible remains, continue
             if queue.is_empty() {
                 continue;
             }
@@ -326,10 +322,35 @@ impl DispatchStrategy for ComposableStrategy {
                 .scheduler
                 .schedule(vehicle, &queue_slice, view, state.time);
             queue.retain(|r| *r != chosen);
-            actions.push(SimAction::Dispatch {
-                vehicle_id: vid,
-                dest: chosen,
-            });
+
+            // Demand check before dispatching: if the vehicle can't serve this
+            // request's demand, dispatch to depot instead to reset load.
+            let needs_depot = if let Some(chosen_req) = view.get(chosen) {
+                !chosen_req.is_depot
+                    && vehicle.current_load + chosen_req.demand
+                        > view
+                            .vehicle_specs()
+                            .iter()
+                            .find(|vs| vs.id == vid)
+                            .map(|vs| vs.capacity)
+                            .unwrap_or(f32::INFINITY)
+            } else {
+                false
+            };
+
+            if needs_depot && vehicle.position != view.depot_id() {
+                // Put the chosen request back in the queue and go to depot first
+                queue.push_front(chosen);
+                actions.push(SimAction::Dispatch {
+                    vehicle_id: vid,
+                    dest: view.depot_id(),
+                });
+            } else {
+                actions.push(SimAction::Dispatch {
+                    vehicle_id: vid,
+                    dest: chosen,
+                });
+            }
         }
 
         // Phase 3: emit Wait if nothing to do but work remains.

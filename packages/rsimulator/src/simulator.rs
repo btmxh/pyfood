@@ -481,7 +481,7 @@ impl Simulator {
             service_times_list.append(PyList::new(py, &st)?)?;
         }
 
-        // Compute total travel cost
+        // Compute total travel cost (uses the full route including depot visits)
         let mut total_cost = 0.0_f32;
         let depot = self.requests.get(&self.depot_id).unwrap();
         for v in &self.vehicles {
