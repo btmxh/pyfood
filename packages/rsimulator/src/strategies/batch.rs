@@ -225,6 +225,7 @@ impl DispatchStrategy for BatchComposableStrategy {
             if vehicle.available_at > state.time {
                 continue;
             }
+
             let queue = match self.queues.get_mut(&vid) {
                 Some(q) if !q.is_empty() => q,
                 _ => continue,
@@ -235,10 +236,35 @@ impl DispatchStrategy for BatchComposableStrategy {
                 .scheduler
                 .schedule(vehicle, &queue_slice, view, state.time);
             queue.retain(|r| *r != chosen);
-            actions.push(SimAction::Dispatch {
-                vehicle_id: vid,
-                dest: chosen,
-            });
+
+            // Demand check before dispatching: if the vehicle can't serve this
+            // request's demand, dispatch to depot instead to reset load.
+            let needs_depot = if let Some(chosen_req) = view.get(chosen) {
+                !chosen_req.is_depot
+                    && vehicle.current_load + chosen_req.demand
+                        > view
+                            .vehicle_specs()
+                            .iter()
+                            .find(|vs| vs.id == vid)
+                            .map(|vs| vs.capacity)
+                            .unwrap_or(f32::INFINITY)
+            } else {
+                false
+            };
+
+            if needs_depot && vehicle.position != view.depot_id() {
+                // Put the chosen request back in the queue and go to depot first
+                queue.push_front(chosen);
+                actions.push(SimAction::Dispatch {
+                    vehicle_id: vid,
+                    dest: view.depot_id(),
+                });
+            } else {
+                actions.push(SimAction::Dispatch {
+                    vehicle_id: vid,
+                    dest: chosen,
+                });
+            }
         }
 
         // Phase 4: emit Wait if nothing to do but work remains.

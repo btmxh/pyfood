@@ -26,16 +26,16 @@ struct GreedyRustStrategy {
     depot: Option<Request>,
     /// Vehicle speed (all vehicles share one speed in this model).
     speed: f32,
+    /// Vehicle capacity (homogeneous fleet).
+    capacity: f32,
 }
 
 impl DispatchStrategy for GreedyRustStrategy {
     fn initialize(&mut self, view: &InstanceView<'_>) {
         self.depot = view.get(view.depot_id()).cloned();
-        self.speed = view
-            .vehicle_specs()
-            .first()
-            .map(|vs| vs.speed)
-            .unwrap_or(1.0);
+        let specs = view.vehicle_specs().first();
+        self.speed = specs.map(|vs| vs.speed).unwrap_or(1.0);
+        self.capacity = specs.map(|vs| vs.capacity).unwrap_or(f32::INFINITY);
     }
 
     fn next_events(
@@ -46,6 +46,8 @@ impl DispatchStrategy for GreedyRustStrategy {
         if state.pending.is_empty() {
             return vec![];
         }
+
+        let depot_id = self.depot.as_ref().map(|d| d.id).unwrap_or(RequestId(-1));
 
         let mut pending_sorted: Vec<i64> = state.pending.iter().map(|r| r.0).collect();
         pending_sorted.sort_unstable();
@@ -61,12 +63,11 @@ impl DispatchStrategy for GreedyRustStrategy {
         let mut remaining: std::collections::VecDeque<i64> = pending_sorted.into_iter().collect();
 
         'vehicles: for vehicle in idle_vehicles {
-            let vehicle_pos_req: Option<&Request> =
-                if vehicle.position == self.depot.as_ref().map(|d| d.id).unwrap_or(RequestId(-1)) {
-                    self.depot.as_ref()
-                } else {
-                    view.get(vehicle.position)
-                };
+            let vehicle_pos_req: Option<&Request> = if vehicle.position == depot_id {
+                self.depot.as_ref()
+            } else {
+                view.get(vehicle.position)
+            };
 
             let n = remaining.len();
             for i in 0..n {
@@ -75,6 +76,11 @@ impl DispatchStrategy for GreedyRustStrategy {
                     Some(r) => r,
                     None => continue,
                 };
+
+                // Capacity check: skip if serving this request would exceed capacity
+                if !dest_req.is_depot && vehicle.current_load + dest_req.demand > self.capacity {
+                    continue;
+                }
 
                 let travel_time = match vehicle_pos_req {
                     Some(pos) => {
@@ -99,6 +105,15 @@ impl DispatchStrategy for GreedyRustStrategy {
                     continue 'vehicles;
                 }
             }
+
+            // No feasible request found — return to depot to reset capacity
+            // if the vehicle has load and is not already at the depot.
+            if vehicle.current_load > 0.0 && vehicle.position != depot_id {
+                actions.push(SimAction::Dispatch {
+                    vehicle_id: vehicle.vehicle_id,
+                    dest: depot_id,
+                });
+            }
         }
 
         actions
@@ -120,6 +135,7 @@ pub fn greedy_strategy() -> NativeDispatchStrategy {
         inner: Some(Box::new(GreedyRustStrategy {
             depot: None,
             speed: 1.0_f32,
+            capacity: f32::INFINITY,
         })),
     }
 }

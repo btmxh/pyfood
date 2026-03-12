@@ -268,7 +268,7 @@ class TestComposableStrategy(unittest.TestCase):
         strategy = self._make_strategy(AssignToFirstVehicleRouter(), FifoScheduler())
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
         self.assertEqual(result.metrics.rejected, 0)
 
@@ -278,7 +278,7 @@ class TestComposableStrategy(unittest.TestCase):
         strategy = self._make_strategy(RejectAllRouter(), FifoScheduler())
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, set())
         self.assertEqual(result.metrics.rejected, 2)
 
@@ -312,7 +312,9 @@ class TestComposableStrategy(unittest.TestCase):
         strategy = self._make_strategy(RoundRobinRouter(), FifoScheduler())
         result = RustSimulator(inst, strategy).run()
 
-        total_served = sum(len(r) for r in result.solution.routes)
+        total_served = sum(
+            1 for route in result.solution.routes for r in route if r != 0
+        )
         self.assertEqual(total_served, 3)
 
     def test_solution_structure(self):
@@ -347,8 +349,12 @@ class TestComposableStrategy(unittest.TestCase):
         ).run()
 
         # Both must serve all requests; only order may differ.
-        fifo_served = {r for route in fifo_result.solution.routes for r in route}
-        max_served = {r for route in max_result.solution.routes for r in route}
+        fifo_served = {
+            r for route in fifo_result.solution.routes for r in route if r != 0
+        }
+        max_served = {
+            r for route in max_result.solution.routes for r in route if r != 0
+        }
         self.assertEqual(fifo_served, {1, 2})
         self.assertEqual(max_served, {1, 2})
         # FIFO: dispatch 1 then 2; Max: dispatch 2 then 1.
@@ -390,7 +396,7 @@ class TestComposableStrategy(unittest.TestCase):
         )
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
 
     def test_batch_composable_strategy_with_explicit_wrappers(self):
@@ -405,7 +411,7 @@ class TestComposableStrategy(unittest.TestCase):
         )
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
 
 
@@ -431,7 +437,7 @@ class TestBatchComposableStrategy(unittest.TestCase):
         strategy = self._make(AssignToFirstVehicleBatchRouter())
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, {1, 2})
         self.assertEqual(result.metrics.rejected, 0)
 
@@ -441,7 +447,7 @@ class TestBatchComposableStrategy(unittest.TestCase):
         strategy = self._make(RejectAllBatchRouter())
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertEqual(served, set())
         self.assertEqual(result.metrics.rejected, 2)
 
@@ -522,7 +528,9 @@ class TestBatchComposableStrategy(unittest.TestCase):
         strategy = self._make(SplitBatchRouter())
         result = RustSimulator(inst, strategy).run()
 
-        total_served = sum(len(r) for r in result.solution.routes)
+        total_served = sum(
+            1 for route in result.solution.routes for r in route if r != 0
+        )
         self.assertEqual(total_served, 3)
         self.assertEqual(result.metrics.rejected, 0)
 
@@ -546,7 +554,7 @@ class TestBatchComposableStrategy(unittest.TestCase):
         strategy = self._make(RejectOddBatchRouter())
         result = RustSimulator(inst, strategy).run()
 
-        served = {r for route in result.solution.routes for r in route}
+        served = {r for route in result.solution.routes for r in route if r != 0}
         self.assertIn(2, served)
         self.assertNotIn(1, served)
         self.assertEqual(result.metrics.rejected, 1)
